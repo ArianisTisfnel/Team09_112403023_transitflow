@@ -33,7 +33,7 @@
 | 06 | [06-A-query-user-profile-bookings.md](06-A-query-user-profile-bookings.md) | `query_user_profile`、`query_user_bookings`、`query_payment_info` |
 | 07 | [07-A-query-nr-availability.md](07-A-query-nr-availability.md) | `query_national_rail_availability`（單日 + 14 天視窗） |
 | 08 | [08-A-query-nr-fare-metro-schedules.md](08-A-query-nr-fare-metro-schedules.md) | `query_national_rail_fare`（含快取）、`query_metro_schedules`（含 JSONB 營運日） |
-| 09 | [09-A-query-metro-fare-seats.md](09-A-query-metro-fare-seats.md) | `query_metro_fare`（BFS）、`query_available_seats`（JSONB 解析）、`auto_select_adjacent_seats`（相鄰選位） |
+| 09 | [09-A-query-metro-fare-seats.md](09-A-query-metro-fare-seats.md) | `query_metro_fare`（班次查詢 + 跳數分層計費）、`query_available_seats`（JSONB 解析）、`auto_select_adjacent_seats`（相鄰選位） |
 | 10 | [10-A-execute-booking.md](10-A-execute-booking.md) | `execute_booking`（原子交易、自動選位、座位衝突偵測） |
 | 11 | [11-A-execute-cancellation.md](11-A-execute-cancellation.md) | `execute_cancellation`（狀態機驗證、稽核軌跡） |
 | 12 | [12-A-auth-functions.md](12-A-auth-functions.md) | `register_user`、`login_user`、`get_user_secret_question`、`verify_secret_answer`、`update_password` |
