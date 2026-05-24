@@ -112,6 +112,87 @@ def query_delay_ripple(delayed_station_id: str, hops: int = 2) -> list[dict]: ..
 def query_station_connections(station_id: str) -> list[dict]: ...
 ```
 
+## Function Specification References
+
+每個函式都有對應的詳細實作指南（`docs/` 目錄）。**產生程式碼前請先查閱對應文件**，文件中有完整的 SQL 偽代碼、回傳格式範例、快取 key 格式與驗收測試說明。
+
+| 函式 | 實作指南 | 前置文件 |
+|---|---|---|
+| `query_national_rail_availability` | [docs/07](docs/07-A-query-nr-availability.md) | 04, 05 |
+| `query_national_rail_fare` | [docs/08](docs/08-A-query-nr-fare-metro-schedules.md) | 04, 05 |
+| `query_metro_schedules` | [docs/08](docs/08-A-query-nr-fare-metro-schedules.md) | 04, 05 |
+| `query_metro_fare` | [docs/09](docs/09-A-query-metro-fare-seats.md) | 04, 05 |
+| `query_available_seats` | [docs/09](docs/09-A-query-metro-fare-seats.md) | 04, 05 |
+| `auto_select_adjacent_seats` | [docs/09](docs/09-A-query-metro-fare-seats.md) | — |
+| `query_user_profile` / `query_user_bookings` / `query_payment_info` | [docs/06](docs/06-A-query-user-profile-bookings.md) | 04, 05 |
+| `execute_booking` | [docs/10](docs/10-A-execute-booking.md) | 05, query_available_seats |
+| `execute_cancellation` | [docs/11](docs/11-A-execute-cancellation.md) | 05, execute_booking |
+| Auth functions | [docs/12](docs/12-A-auth-functions.md) | 04 |
+| Neo4j seed scripts | [docs/13](docs/13-B-neo4j-seed-stations.md)–[15](docs/15-B-neo4j-seed-interchange.md) | Graph schema |
+| `query_shortest_route` / `query_station_connections` | [docs/16](docs/16-B-query-shortest-route.md) | 13–15 seeded |
+| `query_alternative_routes` | [docs/17](docs/17-B-query-alternative-routes.md) | 13–15 seeded |
+| `query_interchange_path` | [docs/18](docs/18-B-query-interchange-path.md) | 13–15 seeded |
+| `query_delay_ripple` | [docs/19](docs/19-B-query-delay-ripple.md) | 13–15 seeded |
+| `query_cheapest_route` | [docs/20](docs/20-B-query-cheapest-route.md) | 13–15 seeded + 08, 09 |
+| Stage 3 infrastructure | [docs/23](docs/23-stage3.1-exception-layer.md)–[26](docs/26-stage3.4-ui-observability.md) | Stage 1/2 complete |
+
+---
+
+## ⚠️ Critical Rules — 絕對不可違反
+
+1. **禁止修改這三個檔案**：`skeleton/config.py`、`skeleton/llm_provider.py`、`skeleton/seed_vectors.py`
+2. **Stage 1/2 禁止 import 快取**：`queries.py` 不得有 `from skeleton.cache import ...`，Stage 3.3 前一律不加快取邏輯
+3. **絕對不快取這兩個函式**：`query_available_seats`、`execute_booking`（防止超賣）
+4. **Neo4j 種子腳本用 `MERGE`，不用 `CREATE`**（確保可重入執行）
+5. **`skeleton/agent.py` 禁止直接 import DB**：不可有 `import psycopg2`、`from neo4j`、`from databases.relational.queries import`、`from databases.graph.queries import`
+6. **所有 SQL 輸入使用 `%s` placeholder**，嚴禁字串格式化 SQL
+7. **主軸 B 開始前必須清理 scaffold**：刪除 `databases/graph/queries.py` 頂部的 `from neo4j import GraphDatabase` 與 `def _driver():` 兩段代碼
+8. **寫入操作需手動管理 `autocommit=False`**；讀取操作使用 `_connect()`（已設定 autocommit=True）
+
+---
+
+## ⛔ AI 常見錯誤 — 禁止以下模式
+
+```python
+# ❌ 錯誤簽名（舊版已廢棄，請勿使用）
+query_national_rail_fare(origin_id, destination_id, fare_class)
+#   → 正確：query_national_rail_fare(schedule_id, fare_class, stops_travelled)
+
+query_metro_fare(origin_id, destination_id)
+#   → 正確：query_metro_fare(schedule_id, stops_travelled)
+
+query_metro_schedules(line_id, direction, travel_date)
+#   → 正確：query_metro_schedules(origin_id, destination_id)
+
+# ❌ query_metro_fare 中做圖遍歷 / BFS
+#   → 正確：只查 metro_schedules 確認 schedule_id 存在，再依 stops_travelled 分層計費
+
+# ❌ 直接以站點 ID 呼叫票價函式（query_cheapest_route 中）
+fare_info = query_metro_fare(from_id, to_id)
+#   → 正確兩步模式：
+metro_scheds = query_metro_schedules(from_id, to_id)
+fare_info    = query_metro_fare(metro_scheds[0]["schedule_id"], stops_travelled)
+
+fare_info = query_national_rail_fare(from_id, to_id, fare_class)
+#   → 正確兩步模式：
+avail     = query_national_rail_availability(from_id, to_id)
+fare_info = query_national_rail_fare(avail[0]["schedule_id"], fare_class, stops_travelled)
+
+# ❌ Stage 1/2 中在 queries.py 加入快取 import
+from skeleton.cache import fare_cache   # Stage 3.3 之前禁止
+
+# ❌ 使用不存在的表格名稱（只能用 schema.sql 定義的名稱）
+SELECT * FROM fares ...        # 表格不存在
+SELECT * FROM stations ...     # 表格不存在
+SELECT * FROM metro_station_adjacencies ...  # 此表格已棄用（metro_fare 不再依賴它）
+```
+
+**快取 key 格式參考**（Stage 3.3 實作時使用）：
+- `query_national_rail_fare` → `"fare:{schedule_id}:{fare_class}:{stops_travelled}"`
+- `query_metro_schedules` → `"metro_sched:{origin_id}:{destination_id}"`
+
+---
+
 ## Team Decisions Log
 
 <!-- Add entries as you make decisions. Format: "Decision: X. Why: Y." -->
