@@ -121,7 +121,10 @@ LIMIT 10   ← 最多評估 10 條路徑（效能限制）
 偽代碼（票價計算邏輯）：
 
 # 在 Python 層 import 另一個模組的函式（跨模組呼叫）
-from databases.relational.queries import query_national_rail_fare, query_metro_fare
+from databases.relational.queries import (
+    query_national_rail_fare, query_metro_fare,
+    query_metro_schedules, query_national_rail_availability,
+)
 
 for path_record in paths:
     station_ids = path_record["station_ids"]
@@ -142,16 +145,22 @@ for path_record in paths:
         
         try:
             if is_from_metro and is_to_metro:
-                # 捷運路段：呼叫 query_metro_fare（BFS 計算）
-                fare_info = query_metro_fare(from_id, to_id)
-                segment_fare = fare_info.get("fare_usd", 0.0) or 0.0
-            else:
-                # 國鐵路段（或跨網路路段）：呼叫 query_national_rail_fare
-                fare_info = query_national_rail_fare(from_id, to_id, fare_class)
-                if fare_info:
-                    segment_fare = fare_info.get("total_fare_usd", 0.0)
+                # 捷運路段：先查班次取得 schedule_id，再計算票價
+                # 圖路徑中相鄰節點為直連路段，stops_travelled = 1
+                metro_scheds = query_metro_schedules(from_id, to_id)
+                if metro_scheds:
+                    fare_info = query_metro_fare(metro_scheds[0]["schedule_id"], 1)
+                    segment_fare = fare_info["fare_usd"] if fare_info else 1.50
                 else:
-                    segment_fare = 5.0  ← 找不到票價時的預設值（兜底邏輯）
+                    segment_fare = 1.50  ← 兜底：最低捷運票價
+            else:
+                # 國鐵路段（或跨網路路段）：先查可用班次取得 schedule_id
+                avail = query_national_rail_availability(from_id, to_id)
+                if avail:
+                    fare_info = query_national_rail_fare(avail[0]["schedule_id"], fare_class, 1)
+                    segment_fare = fare_info["total_fare_usd"] if fare_info else 5.0
+                else:
+                    segment_fare = 5.0  ← 找不到班次時的預設值（兜底邏輯）
             
             total_fare_usd += segment_fare
             segment_fares.append({
@@ -199,7 +208,7 @@ return {
 但在路徑枚舉中，INTERCHANGE 端點是兩個不同站點，計算票價時：
 - `from_id` 可能是 `MS01`（捷運）
 - `to_id` 可能是 `NR01`（國鐵）
-- `query_national_rail_fare("MS01", "NR01", ...)` 可能回傳 None（因為 MS01 不在國鐵時刻表中）
+- `query_national_rail_availability("MS01", "NR01")` 會回傳 `[]`（跨網路無直達班次）
 
 這種情況下的兜底邏輯（預設 `segment_fare = 5.0`）確保計算不中斷，
 但結果是近似的，呼叫方應理解這是估算而非精確票價。

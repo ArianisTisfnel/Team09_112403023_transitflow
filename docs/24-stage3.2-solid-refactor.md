@@ -35,11 +35,11 @@ DatabaseService(ABC)                    ← 所有服務的根基類別
 @abstractmethod
 def query_national_rail_availability(self, origin_id, destination_id, travel_date=None): ...
 @abstractmethod
-def query_national_rail_fare(self, origin_id, destination_id, fare_class="standard"): ...
+def query_national_rail_fare(self, schedule_id, fare_class, stops_travelled): ...
 @abstractmethod
 def query_metro_schedules(self, origin_id, destination_id): ...
 @abstractmethod
-def query_metro_fare(self, origin_id, destination_id): ...
+def query_metro_fare(self, schedule_id, stops_travelled): ...
 @abstractmethod
 def query_available_seats(self, schedule_id, travel_date, fare_class): ...
 @abstractmethod
@@ -84,9 +84,11 @@ class PostgreSQLService(RelationalService):
 - `svc.query_metro_schedules("MS01", "MS09")` → `self._q.query_metro_schedules("MS01", "MS09")`（位置參數直接透傳）
 - `svc.query_shortest_route("NR01", "NR05")` → `self._q.query_shortest_route("NR01", "NR05", "auto")`（補預設值）
 
-> ⚠️ **`query_metro_schedules` 參數命名說明**：`RelationalService` 抽象方法使用 `(origin_id, destination_id)`，與 `databases/relational/queries.py` 中同名函式的實際參數名稱 `(line_id, direction, travel_date)` 不同。`PostgreSQLService.query_metro_schedules` 採用**位置參數直接透傳**（如上偽代碼），不做額外映射——`solid_refactor` 系列單元測試以 mock 驗證委派行為，不執行真實 DB 查詢，因此兩者在測試層面不衝突。
+> ℹ️ **`query_metro_schedules` 參數說明**：`RelationalService` 抽象方法與 `databases/relational/queries.py` 中的實際簽名均為 `(origin_id, destination_id)`，兩者一致，`PostgreSQLService` 直接位置透傳即可。
 
-> ⚠️ **`query_metro_fare` 參數命名說明**：`RelationalService` 抽象方法使用 `(origin_id, destination_id)`，對應 `databases/relational/queries.py` 中的實際簽名 `query_metro_fare(origin_id: str, destination_id: str)`，兩者一致，直接委派即可。`PostgreSQLService.query_metro_fare` 偽代碼：`return self._q.query_metro_fare(origin_id, destination_id)`。
+> ℹ️ **`query_metro_fare` 參數說明**：`RelationalService` 抽象方法使用 `(schedule_id, stops_travelled)`，對應 `databases/relational/queries.py` 中的實際簽名 `query_metro_fare(schedule_id: str, stops_travelled: int)`，兩者一致，直接委派即可。`PostgreSQLService.query_metro_fare` 偽代碼：`return self._q.query_metro_fare(schedule_id, stops_travelled)`。
+
+> ℹ️ **`query_national_rail_fare` 參數說明**：`RelationalService` 抽象方法使用 `(schedule_id, fare_class, stops_travelled)`，對應 `databases/relational/queries.py` 中的實際簽名，兩者一致，直接委派即可。`PostgreSQLService.query_national_rail_fare` 偽代碼：`return self._q.query_national_rail_fare(schedule_id, fare_class, stops_travelled)`。
 
 > ℹ️ **`auto_select_adjacent_seats` 說明**：此抽象方法為服務介面完整性而宣告（測試驗證子類別可被正常實例化）。函式簽名為 `auto_select_adjacent_seats(available_seats: list[dict], count: int) -> list[str]`，接收 `query_available_seats()` 的輸出並回傳 `count` 個盡量同排的 `seat_id` 字串 list（詳細規格與偽代碼見 `09-A-query-metro-fare-seats.md` 函式三）。`PostgreSQLService` 委派偽代碼：`return self._q.auto_select_adjacent_seats(*args, **kwargs)`。
 

@@ -156,8 +156,8 @@ def warmup_policy_cache() -> int:
 # 在 databases/relational/queries.py 中
 from skeleton.cache import fare_cache
 
-def query_national_rail_fare(origin_id, destination_id, fare_class="standard"):
-    cache_key = f"fare:{origin_id}:{destination_id}:{fare_class}"
+def query_national_rail_fare(schedule_id, fare_class, stops_travelled):
+    cache_key = f"fare:{schedule_id}:{fare_class}:{stops_travelled}"
     cached = fare_cache.get(cache_key)
     if cached is not None:
         return cached
@@ -171,17 +171,15 @@ def query_national_rail_fare(origin_id, destination_id, fare_class="standard"):
     return result
 ```
 
-**快取 key 格式**：`"fare:{origin_id}:{destination_id}:{fare_class}"`
+**快取 key 格式**：`"fare:{schedule_id}:{fare_class}:{stops_travelled}"`
 
 ### query_metro_schedules 快取整合
 
 ```python
 from skeleton.cache import schedule_cache
 
-def query_metro_schedules(line=None, direction=None, travel_date=None, ...):
-    dir_part  = direction   if direction   is not None else "all"
-    date_part = travel_date if travel_date is not None else "today"
-    cache_key = f"metro_sched:{line}:{dir_part}:{date_part}"
+def query_metro_schedules(origin_id, destination_id):
+    cache_key = f"metro_sched:{origin_id}:{destination_id}"
     
     cached = schedule_cache.get(cache_key)
     if cached is not None:
@@ -194,7 +192,7 @@ def query_metro_schedules(line=None, direction=None, travel_date=None, ...):
     return result
 ```
 
-**快取 key 格式**：`"metro_sched:{line}:{direction|all}:{travel_date|today}"`
+**快取 key 格式**：`"metro_sched:{origin_id}:{destination_id}"`
 
 ### 絕對禁止快取的函式
 
@@ -247,8 +245,8 @@ def query_metro_schedules(line=None, direction=None, travel_date=None, ...):
 **快取整合**：
 1. `query_national_rail_fare` 第二次相同呼叫不觸及 DB
 2. `query_metro_schedules` 第二次相同呼叫不觸及 DB
-3. `fare_cache.get("fare:NR03:NR07:senior")` 在呼叫後非 `None`
-4. `schedule_cache.get("metro_sched:M2:all:today")` 在呼叫後非 `None`
+3. `fare_cache.get("fare:NR_SCH01:senior:1")` 在呼叫後非 `None`（key 格式 `fare:{schedule_id}:{fare_class}:{stops_travelled}`）
+4. `schedule_cache.get("metro_sched:MS01:MS10")` 在呼叫後非 `None`（key 格式 `metro_sched:{origin_id}:{destination_id}`）
 5. `query_available_seats` 原始碼不含任何快取變數名稱
 6. `execute_booking` 原始碼不含任何快取變數名稱
 
