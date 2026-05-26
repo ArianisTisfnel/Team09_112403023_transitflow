@@ -740,6 +740,422 @@ def update_password(email: str, new_password: str) -> bool:
             return cur.rowcount > 0
 
 
+# ── ADVANCED QUERIES — doc 21 & 22 ──────────────────────────────────────────
+
+def query_alternative_schedules_fallback(schedule_id: str, travel_date: str) -> dict:
+    """Find alternative schedules when the requested one is full."""
+    base = {
+        "schedule_id": schedule_id,
+        "travel_date": travel_date,
+        "original_departure_time": None,
+        "alternatives": [],
+        "alternatives_found": 0,
+        "error": None,
+    }
+    try:
+        with _connect() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                # Step 1: 查詢原始班次
+                cur.execute(
+                    "SELECT origin_station_id, destination_station_id, first_train_time "
+                    "FROM national_rail_schedules WHERE schedule_id = %s",
+                    (schedule_id,)
+                )
+                original = cur.fetchone()
+                if not original:
+                    base["error"] = "SCHEDULE_NOT_FOUND"
+                    return base
+
+                original_departure = str(original["first_train_time"])[:5]
+                base["original_departure_time"] = original_departure
+
+                # Step 2: CTE 查詢替代班次
+                sql = """
+                    WITH bookings_count AS (
+                        SELECT schedule_id, COUNT(*) AS booked_seats
+                        FROM national_rail_bookings
+                        WHERE status IN ('confirmed', 'pending')
+                          AND travel_date = %s::DATE
+                        GROUP BY schedule_id
+                    )
+                    SELECT
+                        s.schedule_id, s.line, s.direction, s.service_type,
+                        s.origin_station_id, s.destination_station_id,
+                        TO_CHAR(s.first_train_time, 'HH24:MI') AS departure_time,
+                        s.base_fare_usd,
+                        %s::DATE AS travel_date,
+                        sl.total_seats,
+                        COALESCE(bc.booked_seats, 0) AS booked_seats,
+                        sl.total_seats - COALESCE(bc.booked_seats, 0) AS available_seats,
+                        MOD(
+                            (EXTRACT(EPOCH FROM s.first_train_time)
+                             - EXTRACT(EPOCH FROM (
+                                 SELECT first_train_time FROM national_rail_schedules
+                                 WHERE schedule_id = %s
+                             )))::BIGINT + 86400,
+                            86400
+                        ) AS time_diff_seconds
+                    FROM national_rail_schedules s
+                    LEFT JOIN national_rail_seat_layouts sl ON s.schedule_id = sl.schedule_id
+                    LEFT JOIN bookings_count bc ON s.schedule_id = bc.schedule_id
+                    WHERE s.origin_station_id = %s
+                      AND s.destination_station_id = %s
+                      AND s.schedule_id != %s
+                      AND MOD(
+                            (EXTRACT(EPOCH FROM s.first_train_time)
+                             - EXTRACT(EPOCH FROM (
+                                 SELECT first_train_time FROM national_rail_schedules
+                                 WHERE schedule_id = %s
+                             )))::BIGINT + 86400,
+                            86400
+                          ) > 0
+                      AND MOD(
+                            (EXTRACT(EPOCH FROM s.first_train_time)
+                             - EXTRACT(EPOCH FROM (
+                                 SELECT first_train_time FROM national_rail_schedules
+                                 WHERE schedule_id = %s
+                             )))::BIGINT + 86400,
+                            86400
+                          ) <= 10800
+                      AND sl.total_seats - COALESCE(bc.booked_seats, 0) > 0
+                    ORDER BY time_diff_seconds ASC
+                    LIMIT 3
+                """
+                cur.execute(sql, (
+                    travel_date, travel_date, schedule_id,
+                    original["origin_station_id"], original["destination_station_id"],
+                    schedule_id, schedule_id, schedule_id
+                ))
+                alternatives = [dict(row) for row in cur.fetchall()]
+
+                for alt in alternatives:
+                    alt["base_fare_usd"] = float(alt["base_fare_usd"])
+                    alt["time_diff_seconds"] = int(alt["time_diff_seconds"])
+
+                if not alternatives:
+                    base["error"] = "NO_ALTERNATIVES_FOUND"
+                    return base
+
+                base["alternatives"] = alternatives
+                base["alternatives_found"] = len(alternatives)
+                return base
+
+    except psycopg2.Error as db_error:
+        base["error"] = f"DATABASE_ERROR: {str(db_error)}"
+        return base
+
+
+def query_schedules_by_date_range(
+    origin_id: str,
+    destination_id: str,
+    start_date: str,
+    end_date: str,
+) -> dict:
+    """Return available schedules between two stations over a date range (max 14 days)."""
+    from datetime import date as date_type
+    base = {
+        "origin_id": origin_id,
+        "destination_id": destination_id,
+        "start_date": start_date,
+        "end_date": end_date,
+        "schedules": [],
+        "total_found": 0,
+        "error": None,
+    }
+    try:
+        try:
+            start = datetime.strptime(start_date, "%Y-%m-%d").date()
+            end = datetime.strptime(end_date, "%Y-%m-%d").date()
+        except ValueError:
+            base["error"] = "INVALID_DATE_FORMAT"
+            return base
+
+        if end < start:
+            base["error"] = "INVALID_DATE_RANGE"
+            return base
+
+        if (end - start).days > 13:
+            base["error"] = "DATE_RANGE_EXCEEDS_14_DAYS"
+            return base
+
+        sql = """
+            WITH date_range AS (
+                SELECT generate_series(%s::DATE, %s::DATE, INTERVAL '1 day')::DATE AS travel_date
+            ),
+            bookings_count AS (
+                SELECT schedule_id, travel_date, COUNT(*) AS booked_seats
+                FROM national_rail_bookings
+                WHERE status IN ('confirmed', 'pending')
+                  AND travel_date >= %s::DATE
+                  AND travel_date <= %s::DATE
+                GROUP BY schedule_id, travel_date
+            )
+            SELECT
+                s.schedule_id, s.line, s.direction,
+                s.origin_station_id, s.destination_station_id,
+                s.first_train_time, s.last_train_time, s.base_fare_usd,
+                dr.travel_date,
+                sl.total_seats,
+                COALESCE(bc.booked_seats, 0) AS booked_seats,
+                sl.total_seats - COALESCE(bc.booked_seats, 0) AS available_seats
+            FROM national_rail_schedules s
+            CROSS JOIN date_range dr
+            LEFT JOIN national_rail_seat_layouts sl ON s.schedule_id = sl.schedule_id
+            LEFT JOIN bookings_count bc
+                ON s.schedule_id = bc.schedule_id AND bc.travel_date = dr.travel_date
+            WHERE s.origin_station_id = %s
+              AND s.destination_station_id = %s
+              AND sl.total_seats - COALESCE(bc.booked_seats, 0) > 0
+            ORDER BY dr.travel_date ASC, s.first_train_time ASC
+        """
+        with _connect() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                cur.execute(sql, (start_date, end_date, start_date, end_date, origin_id, destination_id))
+                schedules = [dict(row) for row in cur.fetchall()]
+
+        base["schedules"] = schedules
+        base["total_found"] = len(schedules)
+        return base
+
+    except psycopg2.Error as db_error:
+        base["error"] = f"DATABASE_ERROR: {str(db_error)}"
+        return base
+
+
+def query_round_trip_itinerary(
+    origin_id: str,
+    destination_id: str,
+    outbound_date: str,
+    return_date: str,
+    fare_class: str = "standard",
+) -> dict:
+    """Plan a round-trip itinerary with 15% discount."""
+    from skeleton.exceptions import ValidationException
+
+    outbound = datetime.strptime(outbound_date, "%Y-%m-%d").date()
+    ret = datetime.strptime(return_date, "%Y-%m-%d").date()
+    if ret < outbound:
+        raise ValidationException("return_date must not be before outbound_date", "INVALID_DATE_ORDER")
+
+    outbound_options = query_national_rail_availability(origin_id, destination_id, outbound_date)
+    return_options = query_national_rail_availability(destination_id, origin_id, return_date)
+
+    # 取第一個可用班次的票價
+    outbound_fare_usd = 0.0
+    if outbound_options:
+        fare_info = query_national_rail_fare(outbound_options[0]["schedule_id"], fare_class, 1)
+        if fare_info:
+            outbound_fare_usd = fare_info["total_fare_usd"]
+
+    return_fare_usd = 0.0
+    if return_options:
+        fare_info = query_national_rail_fare(return_options[0]["schedule_id"], fare_class, 1)
+        if fare_info:
+            return_fare_usd = fare_info["total_fare_usd"]
+
+    total_undiscounted = round(outbound_fare_usd + return_fare_usd, 2)
+    total_discounted = round(total_undiscounted * 0.85, 2)
+
+    return {
+        "origin_id": origin_id,
+        "destination_id": destination_id,
+        "outbound_date": outbound_date,
+        "return_date": return_date,
+        "fare_class": fare_class,
+        "outbound_options": outbound_options,
+        "return_options": return_options,
+        "outbound_fare_usd": outbound_fare_usd,
+        "return_fare_usd": return_fare_usd,
+        "total_undiscounted_price": total_undiscounted,
+        "discount_rate": 0.15,
+        "total_discounted_price": total_discounted,
+        "currency": "USD",
+    }
+
+
+def query_daily_revenue_report(date: str) -> dict:
+    """Return revenue and occupancy breakdown for a given date."""
+    sql = """
+        SELECT
+            b.schedule_id,
+            COUNT(b.booking_id)       AS order_count,
+            SUM(b.amount_usd)         AS schedule_revenue_usd,
+            sl.total_seats,
+            COUNT(b.booking_id)       AS booked_seats,
+            ROUND(COUNT(b.booking_id) * 100.0 / sl.total_seats, 2) AS occupancy_rate
+        FROM national_rail_bookings b
+        JOIN national_rail_seat_layouts sl ON b.schedule_id = sl.schedule_id
+        WHERE b.travel_date = %s::DATE
+          AND b.status IN ('confirmed', 'completed')
+        GROUP BY b.schedule_id, sl.total_seats
+        ORDER BY b.schedule_id
+    """
+    with _connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, (date,))
+            rows = [dict(row) for row in cur.fetchall()]
+
+    schedule_breakdown = []
+    total_revenue = 0.0
+    for row in rows:
+        rev = float(row["schedule_revenue_usd"])
+        total_revenue += rev
+        schedule_breakdown.append({
+            "schedule_id": row["schedule_id"],
+            "order_count": int(row["order_count"]),
+            "schedule_revenue_usd": rev,
+            "total_seats": int(row["total_seats"]),
+            "booked_seats": int(row["booked_seats"]),
+            "occupancy_rate": float(row["occupancy_rate"]),
+        })
+
+    return {
+        "date": date,
+        "total_revenue_usd": round(total_revenue, 2),
+        "schedule_breakdown": schedule_breakdown,
+    }
+
+
+def query_occupancy_forecast(schedule_id: str, lead_days: int) -> dict:
+    """Forecast seat occupancy for the next lead_days days."""
+    from datetime import date as date_type, timedelta
+
+    base = {
+        "schedule_id": schedule_id,
+        "total_seats": 0,
+        "avg_daily_bookings": 0.0,
+        "forecast": [],
+        "error": None,
+    }
+
+    with _connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            # 取總座位數
+            cur.execute(
+                "SELECT total_seats FROM national_rail_seat_layouts WHERE schedule_id = %s",
+                (schedule_id,)
+            )
+            row = cur.fetchone()
+            if not row:
+                base["error"] = "SCHEDULE_NOT_FOUND"
+                return base
+            total_seats = int(row["total_seats"])
+
+            # 過去 7 天平均每日訂票數
+            cur.execute(
+                """
+                SELECT COALESCE(AVG(daily_count), 0) AS avg_daily
+                FROM (
+                    SELECT DATE(booked_at) AS booking_day, COUNT(*) AS daily_count
+                    FROM national_rail_bookings
+                    WHERE schedule_id = %s
+                      AND status IN ('confirmed', 'completed', 'pending')
+                      AND booked_at >= NOW() - INTERVAL '7 days'
+                      AND booked_at < NOW()
+                    GROUP BY DATE(booked_at)
+                ) daily_counts
+                """,
+                (schedule_id,)
+            )
+            avg_row = cur.fetchone()
+            avg_daily = float(avg_row["avg_daily"]) if avg_row else 0.0
+
+            # 未來 lead_days 天的現有訂票數
+            cur.execute(
+                """
+                SELECT travel_date, COUNT(*) AS existing_count
+                FROM national_rail_bookings
+                WHERE schedule_id = %s
+                  AND status IN ('confirmed', 'pending')
+                  AND travel_date > CURRENT_DATE
+                  AND travel_date <= CURRENT_DATE + %s * INTERVAL '1 day'
+                GROUP BY travel_date
+                """,
+                (schedule_id, lead_days)
+            )
+            existing_rows = cur.fetchall()
+
+    existing_by_date = {str(r["travel_date"]): int(r["existing_count"]) for r in existing_rows}
+
+    today = date_type.today()
+    forecast = []
+    for i in range(1, lead_days + 1):
+        fdate = today + timedelta(days=i)
+        fdate_str = fdate.isoformat()
+        existing = existing_by_date.get(fdate_str, 0)
+        predicted_total = min(existing + avg_daily * i, total_seats)
+        predicted_occupancy = round(predicted_total / total_seats * 100, 2) if total_seats else 0.0
+        forecast.append({
+            "forecast_date": fdate_str,
+            "days_from_today": i,
+            "existing_bookings": existing,
+            "predicted_total": round(predicted_total, 2),
+            "predicted_occupancy_rate": predicted_occupancy,
+        })
+
+    base["total_seats"] = total_seats
+    base["avg_daily_bookings"] = round(avg_daily, 2)
+    base["forecast"] = forecast
+    return base
+
+
+def query_user_loyalty_metrics(user_id: str) -> Optional[dict]:
+    """Return loyalty metrics and badge level for a user."""
+    with _connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            # 確認使用者存在
+            cur.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
+            if cur.fetchone() is None:
+                return None
+
+            # 統計訂單數和消費總額
+            cur.execute(
+                """
+                SELECT COUNT(*) AS total_orders,
+                       COALESCE(SUM(amount_usd), 0) AS total_spending_usd
+                FROM national_rail_bookings
+                WHERE user_id = %s AND status IN ('confirmed', 'completed', 'pending')
+                """,
+                (user_id,)
+            )
+            stats = cur.fetchone()
+            total_orders = int(stats["total_orders"])
+            total_spending = float(stats["total_spending_usd"])
+
+            # 最常旅行路線
+            cur.execute(
+                """
+                WITH route_counts AS (
+                    SELECT origin_station_id, destination_station_id, COUNT(*) AS trip_count
+                    FROM national_rail_bookings
+                    WHERE user_id = %s AND status IN ('confirmed', 'completed', 'pending')
+                    GROUP BY origin_station_id, destination_station_id
+                )
+                SELECT origin_station_id, destination_station_id, trip_count
+                FROM route_counts
+                WHERE trip_count = (SELECT MAX(trip_count) FROM route_counts)
+                ORDER BY origin_station_id ASC, destination_station_id ASC
+                """,
+                (user_id,)
+            )
+            routes = [dict(r) for r in cur.fetchall()]
+
+    if total_orders >= 20:
+        badge = "Gold"
+    elif total_orders >= 5:
+        badge = "Silver"
+    else:
+        badge = "Bronze"
+
+    return {
+        "user_id": user_id,
+        "total_orders": total_orders,
+        "total_spending_usd": round(total_spending, 2),
+        "most_traveled_routes": routes,
+        "badge_level": badge,
+    }
+
+
 # ── VECTOR / RAG QUERIES — do not modify ─────────────────────────────────────
 
 def query_policy_vector_search(embedding: list[float], top_k: int = VECTOR_TOP_K) -> list[dict]:
