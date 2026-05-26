@@ -24,28 +24,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from neo4j import GraphDatabase
-
-from skeleton.config import NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
-
-
-def _driver():
-    """Return a Neo4j driver. Caller is responsible for closing."""
-    return GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
-
-
-# ── Example ───────────────────────────────────────────────────────────────────
-# The block below shows the query pattern: open a session, run Cypher, return data.
-
-def example_count_nodes() -> int:
-    """Example: count all nodes currently in the graph."""
-    with _driver() as driver:
-        with driver.session() as session:
-            result = session.run("MATCH (n) RETURN count(n) AS total")
-            return result.single()["total"]
-
-# TODO: Implement the query_ functions below.
-# ─────────────────────────────────────────────────────────────────────────────
+from databases.graph.connection_pool import get_pool
 
 
 # ── FASTEST ROUTE (Dijkstra by travel_time_min) ───────────────────────────────
