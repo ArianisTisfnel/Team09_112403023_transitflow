@@ -105,6 +105,56 @@ def seed_national_rail_connections(session, stations):
     print(f"  Seeded {edges} national rail CONNECTS_TO relationships")
 
 
+def seed_interchange_relations(session, metro_stations, rail_stations):
+    """
+    Create bidirectional INTERCHANGE relationships between metro and national rail
+    stations that share a physical interchange (e.g. MS01 Central Square <-> NR01
+    Central Station). travel_time_min is fixed at 15 to satisfy the minimum
+    transfer-window check in validate_interchange_feasibility (docs/18).
+    """
+    rail_ids = {s["station_id"] for s in rail_stations}
+    pairs = 0
+    for metro in metro_stations:
+        if not metro.get("is_interchange_national_rail"):
+            continue
+        rail_id = metro.get("interchange_national_rail_station_id")
+        if not rail_id or rail_id not in rail_ids:
+            continue
+
+        metro_id = metro["station_id"]
+
+        # metro -> rail
+        session.run(
+            """
+            MATCH (m:Station {station_id: $metro_id})
+            MATCH (r:Station {station_id: $rail_id})
+            MERGE (m)-[i:INTERCHANGE]->(r)
+            SET i.travel_time_min = 15,
+                i.from_network = 'metro',
+                i.to_network = 'national_rail'
+            """,
+            metro_id=metro_id,
+            rail_id=rail_id,
+        )
+
+        # rail -> metro (reverse direction so APOC Dijkstra can traverse both ways)
+        session.run(
+            """
+            MATCH (r:Station {station_id: $rail_id})
+            MATCH (m:Station {station_id: $metro_id})
+            MERGE (r)-[i:INTERCHANGE]->(m)
+            SET i.travel_time_min = 15,
+                i.from_network = 'national_rail',
+                i.to_network = 'metro'
+            """,
+            rail_id=rail_id,
+            metro_id=metro_id,
+        )
+        pairs += 1
+
+    print(f"  Seeded {pairs} INTERCHANGE pairs ({pairs * 2} directed edges)")
+
+
 def seed():
     metro_stations = _load("metro_stations.json")
     rail_stations  = _load("national_rail_stations.json")
@@ -121,7 +171,7 @@ def seed():
         seed_metro_connections(session, metro_stations)
         seed_national_rail_connections(session, rail_stations)
 
-        # TODO (B.3): seed INTERCHANGE relationships between metro and rail
+        seed_interchange_relations(session, metro_stations, rail_stations)
 
     driver.close()
     print("\nNeo4j graph seeded successfully.")
