@@ -66,6 +66,45 @@ def seed_national_rail_stations(session, stations):
     print(f"  Seeded {len(stations)} national rail :Station nodes")
 
 
+def _seed_connections(session, stations, default_time_min):
+    """
+    Shared logic to build CONNECTS_TO edges from a station's adjacent_stations list.
+    The JSON already lists each edge from both endpoints (MS01 lists MS02 AND MS02
+    lists MS01), so iterating once over every (station, neighbor) pair yields a
+    bidirectional graph without an explicit reverse-edge query.
+    """
+    edges = 0
+    for station in stations:
+        origin_id = station["station_id"]
+        for adj in station.get("adjacent_stations", []):
+            session.run(
+                """
+                MATCH (a:Station {station_id: $from_id})
+                MATCH (b:Station {station_id: $to_id})
+                MERGE (a)-[r:CONNECTS_TO {line: $line}]->(b)
+                SET r.travel_time_min = $travel_time_min
+                """,
+                from_id=origin_id,
+                to_id=adj["station_id"],
+                line=adj["line"],
+                travel_time_min=adj.get("travel_time_min", default_time_min),
+            )
+            edges += 1
+    return edges
+
+
+def seed_metro_connections(session, stations):
+    """Create CONNECTS_TO relationships for metro stations (M1–M4 lines)."""
+    edges = _seed_connections(session, stations, default_time_min=3)
+    print(f"  Seeded {edges} metro CONNECTS_TO relationships")
+
+
+def seed_national_rail_connections(session, stations):
+    """Create CONNECTS_TO relationships for national rail stations (NR1–NR2 lines)."""
+    edges = _seed_connections(session, stations, default_time_min=15)
+    print(f"  Seeded {edges} national rail CONNECTS_TO relationships")
+
+
 def seed():
     metro_stations = _load("metro_stations.json")
     rail_stations  = _load("national_rail_stations.json")
@@ -79,7 +118,9 @@ def seed():
         seed_metro_stations(session, metro_stations)
         seed_national_rail_stations(session, rail_stations)
 
-        # TODO (B.2): seed CONNECTS_TO relationships for metro and national rail
+        seed_metro_connections(session, metro_stations)
+        seed_national_rail_connections(session, rail_stations)
+
         # TODO (B.3): seed INTERCHANGE relationships between metro and rail
 
     driver.close()
