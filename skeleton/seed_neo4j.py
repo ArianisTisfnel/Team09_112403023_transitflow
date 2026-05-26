@@ -30,6 +30,42 @@ def _load(filename):
         return json.load(f)
 
 
+def seed_metro_stations(session, stations):
+    """Create :Station nodes for the 20 metro stations (MS01–MS20)."""
+    for station in stations:
+        session.run(
+            """
+            MERGE (s:Station {station_id: $station_id})
+            SET s.name = $name,
+                s.network_type = $network_type,
+                s.lines = $lines
+            """,
+            station_id=station["station_id"],
+            name=station["name"],
+            network_type="metro",
+            lines=station["lines"],
+        )
+    print(f"  Seeded {len(stations)} metro :Station nodes")
+
+
+def seed_national_rail_stations(session, stations):
+    """Create :Station nodes for the 10 national rail stations (NR01–NR10)."""
+    for station in stations:
+        session.run(
+            """
+            MERGE (s:Station {station_id: $station_id})
+            SET s.name = $name,
+                s.network_type = $network_type,
+                s.lines = $lines
+            """,
+            station_id=station["station_id"],
+            name=station["name"],
+            network_type="national_rail",
+            lines=station["lines"],
+        )
+    print(f"  Seeded {len(stations)} national rail :Station nodes")
+
+
 def seed():
     metro_stations = _load("metro_stations.json")
     rail_stations  = _load("national_rail_stations.json")
@@ -40,22 +76,11 @@ def seed():
         session.run("MATCH (n) DETACH DELETE n")
         print("  Cleared existing graph data")
 
-        # TODO: Design your node labels and create metro station nodes.
-        # Each station has: station_id, name, lines, and interchange info.
-        # See metro_stations.json for the full data structure.
+        seed_metro_stations(session, metro_stations)
+        seed_national_rail_stations(session, rail_stations)
 
-        # TODO: Design your node labels and create national rail station nodes.
-        # See national_rail_stations.json for the full data structure.
-
-        # TODO: Design your relationship types and create metro links.
-        # Each station lists its adjacent_stations with line and travel_time_min.
-        # Consider what properties to store on the relationship.
-
-        # TODO: Design your relationship types and create national rail links.
-
-        # TODO: Create interchange relationships between metro and rail stations.
-        # Interchange info is in the is_interchange_national_rail field
-        # of metro_stations.json.
+        # TODO (B.2): seed CONNECTS_TO relationships for metro and national rail
+        # TODO (B.3): seed INTERCHANGE relationships between metro and rail
 
     driver.close()
     print("\nNeo4j graph seeded successfully.")
