@@ -164,28 +164,96 @@ def query_cheapest_route(
 
 # ── ALTERNATIVE ROUTES (avoiding a station) ───────────────────────────────────
 
+_CYPHER_ALTERNATIVE_ROUTES = """
+MATCH (origin:Station {station_id: $origin_id})
+MATCH (destination:Station {station_id: $destination_id})
+CALL apoc.algo.allSimplePaths(
+    origin, destination,
+    'CONNECTS_TO|INTERCHANGE',
+    5
+) YIELD path
+WHERE length(path) > 0
+  AND NOT any(node IN nodes(path) WHERE node.station_id = $avoid_station_id)
+RETURN
+    [n IN nodes(path) | n.station_id] AS station_ids,
+    [n IN nodes(path) | {
+        station_id: n.station_id,
+        name: n.name,
+        network_type: n.network_type
+    }] AS stations
+LIMIT $max_routes
+"""
+
+
 def query_alternative_routes(
     origin_id: str,
     destination_id: str,
     avoid_station_id: str,
     network: str = "auto",
     max_routes: int = 3,
-) -> list[list[dict]]:
+) -> list[dict]:
     """
-    Find paths between two stations that avoid a specific intermediate station.
-    Useful for routing around a delayed or closed station.
+    Find up to `max_routes` paths between two stations that **do not pass through**
+    `avoid_station_id`. Models routing around a closed / delayed station.
+
+    Uses apoc.algo.allSimplePaths (max depth 5) with a node-list filter to exclude
+    the avoided station. Returns an empty list when no alternative exists or on
+    error — never raises.
 
     Args:
         origin_id:         e.g. "NR01"
         destination_id:    e.g. "NR05"
-        avoid_station_id:  e.g. "NR03"
-        network:           "metro", "rail", or "auto"
-        max_routes:        max number of alternatives to return
+        avoid_station_id:  e.g. "NR03" (a station present on the normal path)
+        network:           "metro", "rail", or "auto" (currently unused —
+                           allSimplePaths traverses any relationship type
+                           passed to it; both networks are reachable)
+        max_routes:        upper bound on returned routes (default 3)
 
     Returns:
-        List of routes, each route is a list of leg dicts
+        list of dicts, each containing:
+          station_ids, stations, legs, avoid_station_id.
+        Returns [] when no path avoids the station, or on any exception.
     """
-    raise NotImplementedError("TODO: implement after designing your graph schema")
+    try:
+        with get_pool() as driver:
+            with driver.session() as session:
+                records = session.run(
+                    _CYPHER_ALTERNATIVE_ROUTES,
+                    origin_id=origin_id,
+                    destination_id=destination_id,
+                    avoid_station_id=avoid_station_id,
+                    max_routes=max_routes,
+                ).data()
+
+                routes = []
+                for rec in records:
+                    station_ids = rec["station_ids"]
+                    stations = rec["stations"]
+
+                    legs = []
+                    for i in range(len(station_ids) - 1):
+                        frm = stations[i]
+                        to = stations[i + 1]
+                        legs.append({
+                            "from_station_id": frm["station_id"],
+                            "from_station_name": frm["name"],
+                            "to_station_id": to["station_id"],
+                            "to_station_name": to["name"],
+                            "from_network": frm["network_type"],
+                            "to_network": to["network_type"],
+                        })
+
+                    routes.append({
+                        "station_ids": station_ids,
+                        "stations": stations,
+                        "legs": legs,
+                        "avoid_station_id": avoid_station_id,
+                    })
+
+                return routes
+
+    except Exception:
+        return []
 
 
 # ── CROSS-NETWORK INTERCHANGE PATH ───────────────────────────────────────────
