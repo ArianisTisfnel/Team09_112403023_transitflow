@@ -29,6 +29,39 @@ from databases.graph.connection_pool import get_pool
 
 # ── FASTEST ROUTE (Dijkstra by travel_time_min) ───────────────────────────────
 
+_CYPHER_SHORTEST_ROUTE = """
+MATCH (origin:Station {station_id: $origin_id})
+MATCH (destination:Station {station_id: $destination_id})
+CALL apoc.algo.dijkstra(
+    origin,
+    destination,
+    'CONNECTS_TO|INTERCHANGE',
+    'travel_time_min'
+) YIELD path, weight
+RETURN
+    [n IN nodes(path) | n.station_id] AS station_ids,
+    [n IN nodes(path) | {
+        station_id: n.station_id,
+        name: n.name,
+        network_type: n.network_type
+    }] AS stations,
+    weight AS total_travel_time_min,
+    size(relationships(path)) AS num_legs
+"""
+
+
+def _empty_route_result(origin_id: str, destination_id: str, error: str) -> dict:
+    return {
+        "found": False,
+        "origin_id": origin_id,
+        "destination_id": destination_id,
+        "error": error,
+        "station_ids": [],
+        "stations": [],
+        "legs": [],
+    }
+
+
 def query_shortest_route(
     origin_id: str,
     destination_id: str,
@@ -36,18 +69,74 @@ def query_shortest_route(
 ) -> dict:
     """
     Find the fastest path between two stations, minimising total travel time.
-    Uses apoc.algo.dijkstra (APOC required; enabled in docker-compose.yml).
+    Uses apoc.algo.dijkstra over CONNECTS_TO and INTERCHANGE edges with
+    travel_time_min as the weight (APOC plugin enabled in docker-compose.yml).
 
     Args:
         origin_id:       e.g. "MS01" or "NR01"
         destination_id:  e.g. "MS09" or "NR05"
-        network:         "metro", "rail", or "auto" (inferred from IDs)
+        network:         "metro", "rail", or "auto" (currently unused —
+                         Dijkstra naturally finds the best path regardless of
+                         which network the endpoints sit on)
 
     Returns:
         dict with keys: found, origin_id, destination_id,
-                        total_time_min, path (list of station dicts), legs
+                        total_travel_time_min, num_legs, station_ids,
+                        stations (list of {station_id, name, network_type}),
+                        legs (list of from/to station dicts).
+        On no path or error: found=False with an error key.
     """
-    raise NotImplementedError("TODO: implement after designing your graph schema")
+    try:
+        with get_pool() as driver:
+            with driver.session() as session:
+                record = session.run(
+                    _CYPHER_SHORTEST_ROUTE,
+                    origin_id=origin_id,
+                    destination_id=destination_id,
+                ).single()
+
+                if record is None:
+                    return _empty_route_result(
+                        origin_id,
+                        destination_id,
+                        f"No path found from {origin_id} to {destination_id}",
+                    )
+
+                station_ids = record["station_ids"]
+                stations = record["stations"]
+                total_time = record["total_travel_time_min"]
+                num_legs = record["num_legs"]
+
+                legs = []
+                for i in range(len(station_ids) - 1):
+                    frm = stations[i]
+                    to = stations[i + 1]
+                    legs.append({
+                        "from_station_id": frm["station_id"],
+                        "from_station_name": frm["name"],
+                        "to_station_id": to["station_id"],
+                        "to_station_name": to["name"],
+                        "from_network": frm["network_type"],
+                        "to_network": to["network_type"],
+                    })
+
+                return {
+                    "found": True,
+                    "origin_id": origin_id,
+                    "destination_id": destination_id,
+                    "total_travel_time_min": int(total_time) if total_time is not None else 0,
+                    "num_legs": num_legs,
+                    "station_ids": station_ids,
+                    "stations": stations,
+                    "legs": legs,
+                }
+
+    except Exception as e:
+        return _empty_route_result(
+            origin_id,
+            destination_id,
+            f"Error querying shortest route: {str(e)}",
+        )
 
 
 # ── CHEAPEST ROUTE (Dijkstra by fare) ────────────────────────────────────────
@@ -135,11 +224,46 @@ def query_delay_ripple(delayed_station_id: str, hops: int = 2) -> list[dict]:
 
 # ── STATION CONNECTIONS ───────────────────────────────────────────────────────
 
+_CYPHER_STATION_CONNECTIONS = """
+MATCH (s:Station {station_id: $station_id})-[r]->(n:Station)
+RETURN
+    s.station_id      AS from_station_id,
+    s.name            AS from_station_name,
+    s.network_type    AS from_network,
+    n.station_id      AS to_station_id,
+    n.name            AS to_station_name,
+    n.network_type    AS to_network,
+    type(r)           AS relationship_type,
+    r.travel_time_min AS travel_time_min,
+    r.line            AS line
+ORDER BY n.station_id ASC
+"""
+
+
 def query_station_connections(station_id: str) -> list[dict]:
     """
-    List all direct connections from a given station.
+    List all outgoing direct connections from a given station, including both
+    CONNECTS_TO (same-network rail/metro segments) and INTERCHANGE
+    (cross-network walking transfers).
 
     Args:
         station_id: e.g. "MS01" or "NR01"
+
+    Returns:
+        list of dicts each containing:
+          from_station_id, from_station_name, from_network,
+          to_station_id, to_station_name, to_network,
+          relationship_type ("CONNECTS_TO" or "INTERCHANGE"),
+          travel_time_min, line (None for INTERCHANGE).
+        Returns [] when the station has no outgoing edges or does not exist.
     """
-    raise NotImplementedError("TODO: implement after designing your graph schema")
+    try:
+        with get_pool() as driver:
+            with driver.session() as session:
+                records = session.run(
+                    _CYPHER_STATION_CONNECTIONS,
+                    station_id=station_id,
+                ).data()
+                return records
+    except Exception:
+        return []
