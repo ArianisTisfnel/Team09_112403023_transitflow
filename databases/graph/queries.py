@@ -520,19 +520,161 @@ def validate_interchange_feasibility(path_details: dict) -> bool:
 
 # ── DELAY RIPPLE ANALYSIS ─────────────────────────────────────────────────────
 
-def query_delay_ripple(delayed_station_id: str, hops: int = 2) -> list[dict]:
+_CYPHER_RIPPLE_CENTER = """
+MATCH (center:Station {station_id: $station_id})
+RETURN center.station_id   AS station_id,
+       center.name         AS name,
+       center.network_type AS network_type
+"""
+
+
+def _empty_ripple_result(station_id: str, hops: int, error: Optional[str] = None) -> dict:
+    result = {
+        "affected_station_id": station_id,
+        "affected_station": None,
+        "primary_impact_zone": [],
+        "secondary_impact_zone": [],
+        "total_affected_stations": 0,
+        "total_hops_searched": hops,
+    }
+    if error is not None:
+        result["error"] = error
+    return result
+
+
+def query_delay_ripple(affected_station_id: str, hops: int = 2) -> dict:
     """
-    Find all stations within N hops of a delayed or disrupted station.
-    Works on both metro and national rail networks.
+    Find all stations affected by a disruption at `affected_station_id`,
+    classified by network distance:
+      - primary_impact_zone:   directly connected stations (1 hop away)
+      - secondary_impact_zone: indirectly connected stations (2+ hops away)
+
+    Uses three Cypher passes:
+      1. Confirm the centre station exists (return early with error if not).
+      2. Variable-length path traversal [*1..hops] to enumerate all neighbours
+         within N hops (deduplicated by station_id).
+      3. shortestPath() per neighbour to compute its exact hop count, used
+         for primary/secondary classification.
+
+    Note: Neo4j forbids parameters inside variable-length path patterns, so
+    `hops` is embedded into the query string via f-string. `int()` coercion
+    on input rules out injection.
 
     Args:
-        delayed_station_id: e.g. "NR03" or "MS01"
-        hops:               how many connections out to search (default 2)
+        affected_station_id: centre of the disruption, e.g. "NR03" or "MS01"
+        hops: search radius in hops (default 2)
 
     Returns:
-        List of dicts: {station_id, name, hops_away, lines_affected}
+        dict with affected_station_id, affected_station,
+        primary_impact_zone, secondary_impact_zone, total_affected_stations,
+        total_hops_searched. On missing station / error: error key added,
+        affected_station=None, both zones empty.
     """
-    raise NotImplementedError("TODO: implement after designing your graph schema")
+    # Coerce + clamp hops defensively (docs/19 recommends 1..5)
+    try:
+        hops = max(1, min(int(hops), 5))
+    except (TypeError, ValueError):
+        hops = 2
+
+    try:
+        with get_pool() as driver:
+            with driver.session() as session:
+                # ── Pass 1: centre station ───────────────────────────────────
+                center_record = session.run(
+                    _CYPHER_RIPPLE_CENTER,
+                    station_id=affected_station_id,
+                ).single()
+
+                if center_record is None:
+                    return _empty_ripple_result(
+                        affected_station_id,
+                        hops,
+                        error=f"Affected station {affected_station_id} not found",
+                    )
+
+                affected_station = {
+                    "station_id": center_record["station_id"],
+                    "name": center_record["name"],
+                    "network_type": center_record["network_type"],
+                }
+
+                # ── Pass 2: all neighbours within N hops ─────────────────────
+                ripple_query = (
+                    "MATCH (center:Station {{station_id: $station_id}}) "
+                    "MATCH (center)-[*1..{hops}]-(neighbor:Station) "
+                    "WHERE neighbor.station_id <> center.station_id "
+                    "RETURN DISTINCT "
+                    "    neighbor.station_id   AS station_id, "
+                    "    neighbor.name         AS name, "
+                    "    neighbor.network_type AS network_type, "
+                    "    neighbor.lines        AS lines"
+                ).format(hops=hops)
+
+                neighbors = session.run(
+                    ripple_query,
+                    station_id=affected_station_id,
+                ).data()
+
+                if not neighbors:
+                    return {
+                        "affected_station_id": affected_station_id,
+                        "affected_station": affected_station,
+                        "primary_impact_zone": [],
+                        "secondary_impact_zone": [],
+                        "total_affected_stations": 0,
+                        "total_hops_searched": hops,
+                    }
+
+                # ── Pass 3: exact hop count for each neighbour ───────────────
+                distance_query = (
+                    "MATCH (center:Station {{station_id: $center_id}}) "
+                    "MATCH (neighbor:Station {{station_id: $neighbor_id}}) "
+                    "MATCH path = shortestPath((center)-[*1..{hops}]-(neighbor)) "
+                    "RETURN length(path) AS hop_count"
+                ).format(hops=hops)
+
+                primary_impact_zone = []
+                secondary_impact_zone = []
+
+                for n in neighbors:
+                    nid = n["station_id"]
+                    rec = session.run(
+                        distance_query,
+                        center_id=affected_station_id,
+                        neighbor_id=nid,
+                    ).single()
+                    hop_count = rec["hop_count"] if rec else hops
+
+                    station_info = {
+                        "station_id": nid,
+                        "name": n["name"],
+                        "network_type": n["network_type"],
+                        "lines": n["lines"],
+                        "hops_away": hop_count,
+                    }
+                    if hop_count == 1:
+                        primary_impact_zone.append(station_info)
+                    else:
+                        secondary_impact_zone.append(station_info)
+
+                primary_impact_zone.sort(key=lambda x: x["station_id"])
+                secondary_impact_zone.sort(key=lambda x: x["station_id"])
+
+                return {
+                    "affected_station_id": affected_station_id,
+                    "affected_station": affected_station,
+                    "primary_impact_zone": primary_impact_zone,
+                    "secondary_impact_zone": secondary_impact_zone,
+                    "total_affected_stations": len(primary_impact_zone) + len(secondary_impact_zone),
+                    "total_hops_searched": hops,
+                }
+
+    except Exception as e:
+        return _empty_ripple_result(
+            affected_station_id,
+            hops,
+            error=f"Error querying delay ripple: {str(e)}",
+        )
 
 
 # ── STATION CONNECTIONS ───────────────────────────────────────────────────────
