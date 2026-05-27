@@ -27,8 +27,29 @@ from typing import Optional
 
 from databases.graph.connection_pool import get_pool
 
+# Cross-track imports for query_cheapest_route (docs/20). These functions live
+# in databases.relational.queries — owned by Track A. Importing them is safe
+# even before they are implemented because Python only complains at call time,
+# not import time; the stub raises NotImplementedError, which is caught by the
+# per-segment fallback below.
+from databases.relational.queries import (
+    query_metro_fare,
+    query_metro_schedules,
+    query_national_rail_availability,
+    query_national_rail_fare,
+)
+
 
 _MIN_INTERCHANGE_MIN = 15  # minimum walking time between platforms (docs/15, docs/18)
+
+# Fare fallback defaults (docs/20). Used when the Track A fare functions return
+# nothing or raise — typical reasons include the segment crossing networks
+# (no through-service) and Track A still being on stubs.
+_DEFAULT_METRO_SEGMENT_FARE_USD = 1.50
+_DEFAULT_RAIL_SEGMENT_FARE_USD = 5.00
+_CHEAPEST_PATH_MAX_HOPS = 5
+_CHEAPEST_PATH_MAX_EVAL = 10
+_CHEAPEST_TOP_K = 3
 
 
 # ── FASTEST ROUTE (Dijkstra by travel_time_min) ───────────────────────────────
@@ -143,7 +164,60 @@ def query_shortest_route(
         )
 
 
-# ── CHEAPEST ROUTE (Dijkstra by fare) ────────────────────────────────────────
+# ── CHEAPEST ROUTE (allSimplePaths + per-segment fare lookup) ─────────────────
+
+_CYPHER_CHEAPEST_PATHS = """
+MATCH (origin:Station {station_id: $origin_id})
+MATCH (destination:Station {station_id: $destination_id})
+CALL apoc.algo.allSimplePaths(
+    origin, destination,
+    'CONNECTS_TO|INTERCHANGE',
+    $max_hops
+) YIELD path
+WHERE length(path) > 0
+RETURN
+    [n IN nodes(path) | n.station_id] AS station_ids,
+    [n IN nodes(path) | {
+        station_id: n.station_id,
+        name: n.name,
+        network_type: n.network_type
+    }] AS stations
+LIMIT $max_eval
+"""
+
+
+def _segment_fare_usd(from_id: str, to_id: str, fare_class: str) -> float:
+    """
+    Compute the fare for a single graph edge by routing through the Track A
+    fare functions. Falls back to docs/20-defined defaults whenever Track A
+    returns nothing, raises, or the segment crosses networks (in which case
+    no through-service exists by definition).
+    """
+    is_metro_segment = from_id.startswith("MS") and to_id.startswith("MS")
+
+    try:
+        if is_metro_segment:
+            schedules = query_metro_schedules(from_id, to_id)
+            if schedules:
+                fare = query_metro_fare(schedules[0]["schedule_id"], 1)
+                if fare and "fare_usd" in fare:
+                    return float(fare["fare_usd"])
+            return _DEFAULT_METRO_SEGMENT_FARE_USD
+
+        # National rail segment, or cross-network (MS↔NR via INTERCHANGE)
+        avail = query_national_rail_availability(from_id, to_id)
+        if avail:
+            fare = query_national_rail_fare(avail[0]["schedule_id"], fare_class, 1)
+            if fare and "total_fare_usd" in fare:
+                return float(fare["total_fare_usd"])
+        return _DEFAULT_RAIL_SEGMENT_FARE_USD
+
+    except Exception:
+        # NotImplementedError (Track A stubs), connection issues, key errors,
+        # type errors — anything bubbling up from cross-track calls falls back
+        # to a default so the cheapest-route algorithm can still progress.
+        return _DEFAULT_RAIL_SEGMENT_FARE_USD
+
 
 def query_cheapest_route(
     origin_id: str,
@@ -152,18 +226,104 @@ def query_cheapest_route(
     fare_class: str = "standard",
 ) -> dict:
     """
-    Find the cheapest path between two stations, minimising total estimated fare.
+    Find the cheapest path(s) between two stations by enumerating all simple
+    paths (max depth 5, max 10 evaluated), costing each segment via the Track
+    A fare functions, and returning the top 3 sorted by total fare.
+
+    Segment cost rules (per docs/20):
+      - Metro segment (MS->MS):   query_metro_schedules + query_metro_fare
+      - Rail / cross-network:     query_national_rail_availability + query_national_rail_fare
+      - Any Track-A failure:      fall back to default per docs/20
 
     Args:
-        origin_id:       e.g. "NR01"
-        destination_id:  e.g. "NR05"
-        network:         "metro", "rail", or "auto"
-        fare_class:      "standard" or "first" (national rail only)
+        origin_id:       e.g. "NR01" or "MS01"
+        destination_id:  e.g. "NR05" or "MS09"
+        network:         "metro" / "rail" / "auto" (currently unused —
+                         allSimplePaths spans whichever relationship types
+                         appear on viable paths)
+        fare_class:      "standard" or "first" (passed through to
+                         query_national_rail_fare)
 
     Returns:
-        dict with found, total_fare_usd (approximate), stations, legs
+        dict with: found, origin_id, destination_id,
+                   cheapest_routes (list of top-3 routes sorted by total_fare_usd,
+                       each with station_ids / stations / total_fare_usd / legs),
+                   routes_found_total, num_cheapest.
+        On no path / error: found=False, cheapest_routes=[], plus error key.
     """
-    raise NotImplementedError("TODO: implement after designing your graph schema")
+    try:
+        with get_pool() as driver:
+            with driver.session() as session:
+                path_records = session.run(
+                    _CYPHER_CHEAPEST_PATHS,
+                    origin_id=origin_id,
+                    destination_id=destination_id,
+                    max_hops=_CHEAPEST_PATH_MAX_HOPS,
+                    max_eval=_CHEAPEST_PATH_MAX_EVAL,
+                ).data()
+
+                if not path_records:
+                    return {
+                        "found": False,
+                        "origin_id": origin_id,
+                        "destination_id": destination_id,
+                        "cheapest_routes": [],
+                        "routes_found_total": 0,
+                        "num_cheapest": 0,
+                        "error": f"No path found from {origin_id} to {destination_id}",
+                    }
+
+                costed_routes = []
+                for record in path_records:
+                    station_ids = record["station_ids"]
+                    stations = record["stations"]
+
+                    total_fare = 0.0
+                    legs = []
+                    for i in range(len(station_ids) - 1):
+                        seg_fare = _segment_fare_usd(
+                            station_ids[i],
+                            station_ids[i + 1],
+                            fare_class,
+                        )
+                        total_fare += seg_fare
+                        legs.append({
+                            "from_station_id": stations[i]["station_id"],
+                            "from_station_name": stations[i]["name"],
+                            "to_station_id": stations[i + 1]["station_id"],
+                            "to_station_name": stations[i + 1]["name"],
+                            "segment_fare_usd": round(seg_fare, 2),
+                        })
+
+                    costed_routes.append({
+                        "station_ids": station_ids,
+                        "stations": stations,
+                        "total_fare_usd": round(total_fare, 2),
+                        "legs": legs,
+                    })
+
+                costed_routes.sort(key=lambda r: r["total_fare_usd"])
+                top = costed_routes[:_CHEAPEST_TOP_K]
+
+                return {
+                    "found": True,
+                    "origin_id": origin_id,
+                    "destination_id": destination_id,
+                    "cheapest_routes": top,
+                    "routes_found_total": len(costed_routes),
+                    "num_cheapest": len(top),
+                }
+
+    except Exception as e:
+        return {
+            "found": False,
+            "origin_id": origin_id,
+            "destination_id": destination_id,
+            "cheapest_routes": [],
+            "routes_found_total": 0,
+            "num_cheapest": 0,
+            "error": f"Error querying cheapest route: {str(e)}",
+        }
 
 
 # ── ALTERNATIVE ROUTES (avoiding a station) ───────────────────────────────────
