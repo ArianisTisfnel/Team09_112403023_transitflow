@@ -8,6 +8,16 @@
 -- ============================================================
 
 -- ============================================================
+--  刪除策略說明（Delete Strategy）
+--  核心資料表（users, stations）使用 ON DELETE RESTRICT，
+--  防止誤刪有關聯資料的記錄，保護歷史訂票與使用者資料的完整性。
+--  依賴資料表（seat_layouts）使用 ON DELETE CASCADE，
+--  父資料刪除時子資料同步清除，避免孤立記錄。
+--  統一使用硬刪除（hard delete），不使用軟刪除，
+--  因為本系統不需要保留已刪除記錄的查詢功能。
+-- ============================================================
+
+-- ============================================================
 --  冪等清理層（DROP IF EXISTS）— 依外鍵依賴反向順序
 -- ============================================================
 DROP TABLE IF EXISTS payments CASCADE;
@@ -30,6 +40,9 @@ DROP TABLE IF EXISTS policy_documents CASCADE;
 --  Table 1: users
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS users (
+    -- PK 設計說明：使用 VARCHAR(20) 作為主鍵（如 "RU01"），而非 UUID 或 SERIAL。
+    -- 原因：業務層需要可讀性高的 ID（方便 debug 與 agent 呼叫），
+    -- 且資料量不大，VARCHAR 的查詢效能足夠。
     user_id         VARCHAR(20)  PRIMARY KEY,
     full_name       VARCHAR(100) NOT NULL,
     email           VARCHAR(255) NOT NULL UNIQUE,
