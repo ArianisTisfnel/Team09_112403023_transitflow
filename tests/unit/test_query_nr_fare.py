@@ -1,292 +1,146 @@
 """
-Mock Test for query_national_rail_fare()
-Tests fare class multipliers and currency handling
+Unit tests for query_national_rail_fare().
+
+Contract (docs/08-A-query-nr-fare-metro-schedules.md):
+    query_national_rail_fare(schedule_id, fare_class, stops_travelled) -> Optional[dict]
+
+The fare is base_fare_usd * fare_multiplier; stops_travelled is echoed back but
+NOT used in the calculation (national_rail_schedules only stores a whole-route
+base_fare_usd). Multipliers: standard 1.0, first 1.5, senior 0.8, student 0.85,
+any other value defaults to 1.0. Returns None when the schedule_id is unknown.
 """
 
 from unittest.mock import MagicMock, patch
+
 from databases.relational.queries import query_national_rail_fare
 
 
-def test_query_national_rail_fare_standard_class():
-    """Test: standard fare class returns base_fare_usd (1.0x multiplier)"""
-    
-    mock_fare_data = {'base_fare_usd': 50.00}
-    
-    with patch('databases.relational.queries._connect') as mock_connect:
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        
-        mock_connect.return_value.__enter__.return_value = mock_conn
-        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = mock_fare_data
-        
-        # Call function
-        result = query_national_rail_fare('NR01', 'NR05', 'standard')
-        
-        # Assertions
-        assert result is not None
-        assert result['origin_id'] == 'NR01'
-        assert result['destination_id'] == 'NR05'
-        assert result['fare_class'] == 'standard'
-        assert result['base_fare_usd'] == 50.00
-        assert result['fare_multiplier'] == 1.0
-        assert result['total_fare_usd'] == 50.00  # 50.00 * 1.0
-        assert result['currency'] == 'USD'
-        
-        # Verify parameterized query
-        mock_cursor.execute.assert_called_once()
-        call_args = mock_cursor.execute.call_args
-        assert '%s' in call_args[0][0]
-        assert call_args[0][1] == ('NR01', 'NR05')
-        
-        print("✓ Test passed: standard fare class (1.0x multiplier)")
+def _mock_connect(fetchone_value):
+    """Build a patched _connect whose cursor.fetchone() returns fetchone_value."""
+    mock_connect = patch("databases.relational.queries._connect").start()
+    mock_conn = MagicMock()
+    mock_cursor = MagicMock()
+    mock_connect.return_value.__enter__.return_value = mock_conn
+    mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+    mock_cursor.fetchone.return_value = fetchone_value
+    return mock_connect, mock_cursor
 
 
-def test_query_national_rail_fare_first_class():
-    """Test: first class returns 1.5x multiplied price"""
-    
-    mock_fare_data = {'base_fare_usd': 50.00}
-    
-    with patch('databases.relational.queries._connect') as mock_connect:
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        
-        mock_connect.return_value.__enter__.return_value = mock_conn
-        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = mock_fare_data
-        
-        # Call function
-        result = query_national_rail_fare('NR01', 'NR05', 'first')
-        
-        # Assertions
-        assert result is not None
-        assert result['fare_class'] == 'first'
-        assert result['base_fare_usd'] == 50.00
-        assert result['fare_multiplier'] == 1.5
-        assert result['total_fare_usd'] == 75.00  # 50.00 * 1.5
-        assert result['currency'] == 'USD'
-        
-        print("✓ Test passed: first class (1.5x multiplier)")
+def test_standard_class_multiplier_1_0():
+    mock_connect, _ = _mock_connect({"base_fare_usd": 50.00})
+    try:
+        result = query_national_rail_fare("NR_SCH01", "standard", 4)
+    finally:
+        patch.stopall()
+    assert result is not None
+    assert result["fare_class"] == "standard"
+    assert result["base_fare_usd"] == 50.00
+    assert result["fare_multiplier"] == 1.0
+    assert result["total_fare_usd"] == 50.00
 
 
-def test_query_national_rail_fare_senior_class():
-    """Test: senior class returns 0.8x discounted price"""
-    
-    mock_fare_data = {'base_fare_usd': 50.00}
-    
-    with patch('databases.relational.queries._connect') as mock_connect:
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        
-        mock_connect.return_value.__enter__.return_value = mock_conn
-        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = mock_fare_data
-        
-        # Call function
-        result = query_national_rail_fare('NR01', 'NR05', 'senior')
-        
-        # Assertions
-        assert result is not None
-        assert result['fare_class'] == 'senior'
-        assert result['base_fare_usd'] == 50.00
-        assert result['fare_multiplier'] == 0.8
-        assert result['total_fare_usd'] == 40.00  # 50.00 * 0.8
-        assert result['currency'] == 'USD'
-        
-        print("✓ Test passed: senior class (0.8x multiplier, 20% discount)")
+def test_first_class_multiplier_1_5():
+    mock_connect, _ = _mock_connect({"base_fare_usd": 50.00})
+    try:
+        result = query_national_rail_fare("NR_SCH01", "first", 4)
+    finally:
+        patch.stopall()
+    assert result["fare_multiplier"] == 1.5
+    assert result["total_fare_usd"] == 75.00
 
 
-def test_query_national_rail_fare_student_class():
-    """Test: student class returns 0.85x discounted price"""
-    
-    mock_fare_data = {'base_fare_usd': 50.00}
-    
-    with patch('databases.relational.queries._connect') as mock_connect:
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        
-        mock_connect.return_value.__enter__.return_value = mock_conn
-        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = mock_fare_data
-        
-        # Call function
-        result = query_national_rail_fare('NR01', 'NR05', 'student')
-        
-        # Assertions
-        assert result is not None
-        assert result['fare_class'] == 'student'
-        assert result['base_fare_usd'] == 50.00
-        assert result['fare_multiplier'] == 0.85
-        assert result['total_fare_usd'] == 42.50  # 50.00 * 0.85
-        assert result['currency'] == 'USD'
-        
-        print("✓ Test passed: student class (0.85x multiplier, 15% discount)")
+def test_senior_class_multiplier_0_8():
+    _mock_connect({"base_fare_usd": 50.00})
+    try:
+        result = query_national_rail_fare("NR_SCH01", "senior", 4)
+    finally:
+        patch.stopall()
+    assert result["fare_multiplier"] == 0.8
+    assert result["total_fare_usd"] == 40.00
 
 
-def test_query_national_rail_fare_default_standard_class():
-    """Test: default fare_class is 'standard' when not specified"""
-    
-    mock_fare_data = {'base_fare_usd': 100.00}
-    
-    with patch('databases.relational.queries._connect') as mock_connect:
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        
-        mock_connect.return_value.__enter__.return_value = mock_conn
-        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = mock_fare_data
-        
-        # Call function without fare_class
-        result = query_national_rail_fare('NR02', 'NR06')
-        
-        # Assertions
-        assert result is not None
-        assert result['fare_class'] == 'standard'  # Default
-        assert result['total_fare_usd'] == 100.00  # 100.00 * 1.0
-        
-        print("✓ Test passed: default to standard class")
+def test_student_class_multiplier_0_85():
+    _mock_connect({"base_fare_usd": 50.00})
+    try:
+        result = query_national_rail_fare("NR_SCH01", "student", 4)
+    finally:
+        patch.stopall()
+    assert result["fare_multiplier"] == 0.85
+    assert result["total_fare_usd"] == 42.50
 
 
-def test_query_national_rail_fare_rounding():
-    """Test: total_fare_usd is correctly rounded to 2 decimal places"""
-    
-    mock_fare_data = {'base_fare_usd': 33.33}
-    
-    with patch('databases.relational.queries._connect') as mock_connect:
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        
-        mock_connect.return_value.__enter__.return_value = mock_conn
-        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = mock_fare_data
-        
-        # Call function - 33.33 * 1.5: float repr of 33.33 is ~33.3299..., so
-        # 33.3299... * 1.5 = 49.9949... which rounds to 49.99, not 50.00.
-        result = query_national_rail_fare('NR01', 'NR05', 'first')
-
-        # Assertions
-        assert result is not None
-        assert result['total_fare_usd'] == 49.99  # Actual floating-point result
-        
-        print("✓ Test passed: rounding to 2 decimal places")
+def test_invalid_fare_class_defaults_to_1_0():
+    _mock_connect({"base_fare_usd": 100.00})
+    try:
+        result = query_national_rail_fare("NR_SCH02", "platinum", 2)
+    finally:
+        patch.stopall()
+    assert result["fare_multiplier"] == 1.0
+    assert result["total_fare_usd"] == 100.00
 
 
-def test_query_national_rail_fare_no_route_found():
-    """Test: returns None when no route exists between stations"""
-    
-    with patch('databases.relational.queries._connect') as mock_connect:
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        
-        mock_connect.return_value.__enter__.return_value = mock_conn
-        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = None  # No route found
-        
-        # Call function
-        result = query_national_rail_fare('NR01', 'NR99', 'standard')
-        
-        # Assertions
-        assert result is None
-        
-        print("✓ Test passed: returns None when no route found")
+def test_total_fare_rounded_to_two_decimals():
+    # float(33.33) * 1.5 = 49.9949... -> round(., 2) == 49.99
+    _mock_connect({"base_fare_usd": 33.33})
+    try:
+        result = query_national_rail_fare("NR_SCH01", "first", 4)
+    finally:
+        patch.stopall()
+    assert result["total_fare_usd"] == 49.99
 
 
-def test_query_national_rail_fare_currency_field():
-    """Test: returned dict always includes currency field"""
-    
-    mock_fare_data = {'base_fare_usd': 75.00}
-    
-    with patch('databases.relational.queries._connect') as mock_connect:
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        
-        mock_connect.return_value.__enter__.return_value = mock_conn
-        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = mock_fare_data
-        
-        # Call function with different fare classes
-        for fare_class in ['standard', 'first', 'senior', 'student']:
-            result = query_national_rail_fare('NR01', 'NR05', fare_class)
-            assert result is not None
-            assert 'currency' in result
-            assert result['currency'] == 'USD'
-        
-        print("✓ Test passed: currency field always present")
+def test_unknown_schedule_returns_none():
+    _mock_connect(None)
+    try:
+        result = query_national_rail_fare("NR_SCH99", "standard", 4)
+    finally:
+        patch.stopall()
+    assert result is None
 
 
-def test_query_national_rail_fare_all_fields_present():
-    """Test: returned dict contains all required fields"""
-    
-    mock_fare_data = {'base_fare_usd': 60.00}
-    
-    with patch('databases.relational.queries._connect') as mock_connect:
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        
-        mock_connect.return_value.__enter__.return_value = mock_conn
-        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = mock_fare_data
-        
-        # Call function
-        result = query_national_rail_fare('NR01', 'NR05', 'first')
-        
-        # Verify all required fields
-        required_fields = [
-            'origin_id',
-            'destination_id',
-            'fare_class',
-            'base_fare_usd',
-            'fare_multiplier',
-            'total_fare_usd',
-            'currency'
-        ]
-        
-        for field in required_fields:
-            assert field in result, f"Missing field: {field}"
-        
-        print("✓ Test passed: all required fields present")
+def test_stops_travelled_is_echoed_not_used_in_math():
+    _mock_connect({"base_fare_usd": 12.50})
+    try:
+        result = query_national_rail_fare("NR_SCH01", "standard", 7)
+    finally:
+        patch.stopall()
+    # stops_travelled is returned unchanged and does not affect the fare
+    assert result["stops_travelled"] == 7
+    assert result["total_fare_usd"] == 12.50
 
 
-def test_query_national_rail_fare_uses_rdictcursor():
-    """Test: function uses RealDictCursor"""
-    
-    mock_fare_data = {'base_fare_usd': 50.00}
-    
-    with patch('databases.relational.queries._connect') as mock_connect:
-        mock_conn = MagicMock()
-        mock_cursor = MagicMock()
-        
-        mock_connect.return_value.__enter__.return_value = mock_conn
-        mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
-        mock_cursor.fetchone.return_value = mock_fare_data
-        
-        # Call function
-        query_national_rail_fare('NR01', 'NR05')
-        
-        # Verify cursor_factory parameter was set to RealDictCursor
-        mock_conn.cursor.assert_called_once()
-        call_kwargs = mock_conn.cursor.call_args[1]
-        # Implementation uses cursor_factory=psycopg2.extras.RealDictCursor
-        
-        print("✓ Test passed: RealDictCursor usage verified")
+def test_all_required_fields_present():
+    _mock_connect({"base_fare_usd": 60.00})
+    try:
+        result = query_national_rail_fare("NR_SCH01", "first", 3)
+    finally:
+        patch.stopall()
+    required = {
+        "schedule_id", "fare_class", "stops_travelled",
+        "base_fare_usd", "fare_multiplier", "total_fare_usd", "currency",
+    }
+    assert required.issubset(result.keys())
+    assert result["currency"] == "USD"
+    assert result["schedule_id"] == "NR_SCH01"
 
 
-if __name__ == '__main__':
-    print("Running Mock Tests for query_national_rail_fare()...")
-    print()
-    
-    test_query_national_rail_fare_standard_class()
-    test_query_national_rail_fare_first_class()
-    test_query_national_rail_fare_senior_class()
-    test_query_national_rail_fare_student_class()
-    test_query_national_rail_fare_default_standard_class()
-    test_query_national_rail_fare_rounding()
-    test_query_national_rail_fare_no_route_found()
-    test_query_national_rail_fare_currency_field()
-    test_query_national_rail_fare_all_fields_present()
-    test_query_national_rail_fare_uses_rdictcursor()
-    
-    print()
-    print("=" * 60)
-    print("All tests passed! ✓")
-    print("=" * 60)
+def test_query_filters_by_schedule_id():
+    _, mock_cursor = _mock_connect({"base_fare_usd": 50.00})
+    try:
+        query_national_rail_fare("NR_SCH01", "standard", 4)
+    finally:
+        patch.stopall()
+    sql, params = mock_cursor.execute.call_args[0]
+    assert "%s" in sql
+    assert "national_rail_schedules" in sql
+    assert params == ("NR_SCH01",)
+
+
+def test_uses_real_dict_cursor():
+    mock_connect, _ = _mock_connect({"base_fare_usd": 50.00})
+    try:
+        query_national_rail_fare("NR_SCH01", "standard", 4)
+        mock_conn = mock_connect.return_value.__enter__.return_value
+        assert "cursor_factory" in mock_conn.cursor.call_args.kwargs
+    finally:
+        patch.stopall()
