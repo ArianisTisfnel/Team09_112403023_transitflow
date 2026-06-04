@@ -69,7 +69,7 @@ def test_query_interchange_path_found():
                 "travel_time": 3,
             },
         ]
-        mock_result_2.fetch.return_value = mock_rel_records
+        mock_result_2.data.return_value = mock_rel_records
         
         # Configure mock session to return different results for different queries
         mock_session.run.side_effect = [mock_result_1, mock_result_2]

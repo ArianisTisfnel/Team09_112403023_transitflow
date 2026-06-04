@@ -393,7 +393,7 @@ class TestQueryStationConnections:
 
         records = self._make_records()
         mock_session = MagicMock()
-        mock_session.run.return_value = iter(records)
+        mock_session.run.return_value.data.return_value = records
         mock_driver = MagicMock()
         mock_driver.session.return_value.__enter__ = lambda s: mock_session
         mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
@@ -412,7 +412,7 @@ class TestQueryStationConnections:
         from databases.graph import queries
 
         mock_session = MagicMock()
-        mock_session.run.return_value = iter([])
+        mock_session.run.return_value.data.return_value = []
         mock_driver = MagicMock()
         mock_driver.session.return_value.__enter__ = lambda s: mock_session
         mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)
@@ -437,7 +437,7 @@ class TestQueryStationConnections:
 
         records = self._make_records()[:1]
         mock_session = MagicMock()
-        mock_session.run.return_value = iter(records)
+        mock_session.run.return_value.data.return_value = records
         mock_driver = MagicMock()
         mock_driver.session.return_value.__enter__ = lambda s: mock_session
         mock_driver.session.return_value.__exit__ = MagicMock(return_value=False)

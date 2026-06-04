@@ -163,8 +163,10 @@ def test_occupancy_forecast_schedule_not_found():
 
     assert result["error"] == "SCHEDULE_NOT_FOUND"
     assert result["forecast"] == []
-    assert result["total_seats"] is None
-    assert result["avg_daily_bookings"] is None
+    # docs/22 only mandates the error flag + empty forecast for the not-found
+    # case; the implementation reports the numeric fields as their empty defaults.
+    assert result["total_seats"] == 0
+    assert result["avg_daily_bookings"] == 0.0
 
 
 def test_occupancy_forecast_returns_exactly_lead_days_entries():
