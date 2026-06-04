@@ -5,6 +5,9 @@
 psycopg2-binary>=2.9.9       # PostgreSQL + pgvector
 neo4j>=5.18.0                # Neo4j graph database
 
+# Security
+argon2-cffi>=23.1.0          # Password hashing (register_user / login_user / seed_postgres)
+
 # LLM providers (install both; only one is used at runtime)
 google-genai>=1.0.0             # Gemini (new SDK, replaces google-generativeai)
 requests>=2.31.0             # Ollama (local)
