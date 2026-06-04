@@ -8,17 +8,18 @@
 -- ============================================================
 
 -- ============================================================
---  刪除策略說明（Delete Strategy）
---  核心資料表（users, stations）使用 ON DELETE RESTRICT，
---  防止誤刪有關聯資料的記錄，保護歷史訂票與使用者資料的完整性。
---  依賴資料表（seat_layouts）使用 ON DELETE CASCADE，
---  父資料刪除時子資料同步清除，避免孤立記錄。
---  統一使用硬刪除（hard delete），不使用軟刪除，
---  因為本系統不需要保留已刪除記錄的查詢功能。
+--  Delete Strategy
+--  Core tables (users, stations) use ON DELETE RESTRICT to prevent
+--  accidentally deleting rows that still have dependents, protecting the
+--  integrity of historical bookings and user records.
+--  Dependent tables (seat_layouts) use ON DELETE CASCADE so children are
+--  removed together with their parent, avoiding orphaned rows.
+--  Hard delete is used throughout (no soft delete) because this system has
+--  no requirement to query previously deleted records.
 -- ============================================================
 
 -- ============================================================
---  冪等清理層（DROP IF EXISTS）— 依外鍵依賴反向順序
+--  Idempotent cleanup (DROP IF EXISTS) — reverse foreign-key dependency order
 -- ============================================================
 DROP TABLE IF EXISTS payments CASCADE;
 DROP TABLE IF EXISTS metro_travel_history CASCADE;
@@ -33,16 +34,17 @@ DROP TABLE IF EXISTS users CASCADE;
 DROP TABLE IF EXISTS policy_documents CASCADE;
 
 -- ============================================================
---  RELATIONAL SCHEMA — 主軸 A 實作
+--  RELATIONAL SCHEMA — Track A implementation
 -- ============================================================
 
 -- ------------------------------------------------------------
 --  Table 1: users
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS users (
-    -- PK 設計說明：使用 VARCHAR(20) 作為主鍵（如 "RU01"），而非 UUID 或 SERIAL。
-    -- 原因：業務層需要可讀性高的 ID（方便 debug 與 agent 呼叫），
-    -- 且資料量不大，VARCHAR 的查詢效能足夠。
+    -- PK design: use a VARCHAR(20) natural key (e.g. "RU01") rather than UUID or SERIAL.
+    -- Reason: the business layer needs human-readable IDs (easier to debug and for the
+    -- agent to reference), and the data volume is small enough that VARCHAR lookups are
+    -- plenty fast.
     user_id         VARCHAR(20)  PRIMARY KEY,
     full_name       VARCHAR(100) NOT NULL,
     email           VARCHAR(255) NOT NULL UNIQUE,
@@ -60,7 +62,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- ------------------------------------------------------------
 --  Table 2 & 3: national_rail_stations + metro_stations
---  （先建立兩張表，再用 ALTER TABLE 加入循環外鍵）
+--  (create both tables first, then add the circular FKs via ALTER TABLE)
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS national_rail_stations (
     national_rail_station_id     VARCHAR(20)  PRIMARY KEY,
@@ -82,7 +84,7 @@ CREATE TABLE IF NOT EXISTS metro_stations (
         CHECK (NOT is_interchange_national_rail OR interchange_national_rail_station_id IS NOT NULL)
 );
 
--- 循環外鍵（延遲驗證）
+-- Circular foreign keys (deferred validation)
 ALTER TABLE national_rail_stations
     ADD CONSTRAINT fk_nr_interchange_metro
     FOREIGN KEY (interchange_metro_station_id)
@@ -277,7 +279,8 @@ CREATE TABLE IF NOT EXISTS metro_travel_history (
 
 -- ------------------------------------------------------------
 --  Table 10: payments
---  （booking_id 刻意不設外鍵，因為同時引用兩張表）
+--  (booking_id deliberately has no FK: it references either of two tables —
+--   national_rail_bookings or metro_travel_history — a polymorphic association)
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS payments (
     payment_id  VARCHAR(30) PRIMARY KEY,
@@ -296,38 +299,38 @@ CREATE TABLE IF NOT EXISTS payments (
 );
 
 -- ============================================================
---  效能索引（19 個業務索引）
+--  Performance indexes (19 business indexes)
 -- ============================================================
 
--- 使用者
+-- Users
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone);
 
--- 捷運站點
+-- Metro stations
 CREATE INDEX IF NOT EXISTS idx_metro_stations_name  ON metro_stations(name);
 CREATE INDEX IF NOT EXISTS idx_metro_stations_lines ON metro_stations USING gin(lines);
 
--- 國鐵站點
+-- National rail stations
 CREATE INDEX IF NOT EXISTS idx_national_rail_stations_name  ON national_rail_stations(name);
 CREATE INDEX IF NOT EXISTS idx_national_rail_stations_lines ON national_rail_stations USING gin(lines);
 
--- 時刻表
+-- Schedules
 CREATE INDEX IF NOT EXISTS idx_metro_schedules_line          ON metro_schedules(line);
 CREATE INDEX IF NOT EXISTS idx_metro_schedules_route         ON metro_schedules(origin_station_id, destination_station_id);
 CREATE INDEX IF NOT EXISTS idx_national_rail_schedules_line  ON national_rail_schedules(line);
 CREATE INDEX IF NOT EXISTS idx_national_rail_schedules_route ON national_rail_schedules(origin_station_id, destination_station_id);
 
--- 訂票紀錄
+-- Bookings
 CREATE INDEX IF NOT EXISTS idx_national_rail_bookings_user_id     ON national_rail_bookings(user_id);
 CREATE INDEX IF NOT EXISTS idx_national_rail_bookings_travel_date ON national_rail_bookings(travel_date);
 CREATE INDEX IF NOT EXISTS idx_national_rail_bookings_schedule_id ON national_rail_bookings(schedule_id);
 
--- 捷運旅遊歷史
+-- Metro travel history
 CREATE INDEX IF NOT EXISTS idx_metro_travel_history_user_id     ON metro_travel_history(user_id);
 CREATE INDEX IF NOT EXISTS idx_metro_travel_history_travel_date ON metro_travel_history(travel_date);
 CREATE INDEX IF NOT EXISTS idx_metro_travel_history_schedule_id ON metro_travel_history(schedule_id);
 
--- 付款
+-- Payments
 CREATE INDEX IF NOT EXISTS idx_payments_booking_id ON payments(booking_id);
 CREATE INDEX IF NOT EXISTS idx_payments_status     ON payments(status);
 CREATE INDEX IF NOT EXISTS idx_payments_paid_at    ON payments(paid_at);

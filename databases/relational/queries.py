@@ -402,13 +402,13 @@ def execute_booking(
         conn.autocommit = False
 
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            # Step 1: 驗證使用者
+            # Step 1: validate the user exists
             cur.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
             if cur.fetchone() is None:
                 conn.rollback()
                 return (False, f"User {user_id} not found")
 
-            # Step 2: 取得班次資訊
+            # Step 2: fetch the schedule
             cur.execute(
                 "SELECT schedule_id, first_train_time, base_fare_usd "
                 "FROM national_rail_schedules WHERE schedule_id = %s",
@@ -422,12 +422,12 @@ def execute_booking(
             departure_time = schedule["first_train_time"]
             base_fare_usd = schedule["base_fare_usd"]
 
-            # Step 3: 計算票價
+            # Step 3: compute the fare
             fare_multipliers = {"standard": 1.0, "first": 1.5, "senior": 0.8, "student": 0.85}
             fare_multiplier = fare_multipliers.get(fare_class, 1.0)
             total_fare_usd = round(float(base_fare_usd) * fare_multiplier, 2)
 
-            # Step 4: 處理座位
+            # Step 4: resolve the seat (auto-pick if "any")
             if seat_id == "any":
                 available = query_available_seats(schedule_id, travel_date, fare_class)
                 if not available:
@@ -439,7 +439,7 @@ def execute_booking(
             else:
                 coach = seat_id[0]
 
-            # Step 5: 座位衝突偵測
+            # Step 5: detect seat conflicts (lock the row to prevent overselling)
             cur.execute(
                 """
                 SELECT booking_id FROM national_rail_bookings
@@ -456,11 +456,11 @@ def execute_booking(
                 conn.rollback()
                 return (False, f"Seat {seat_id} in coach {coach} is already booked for {schedule_id} on {travel_date}")
 
-            # Step 6: 生成 ID
+            # Step 6: generate booking and payment IDs
             booking_id = _gen_booking_id()
             payment_id = _gen_payment_id()
 
-            # Step 7: 插入訂票
+            # Step 7: insert the booking
             cur.execute(
                 """
                 INSERT INTO national_rail_bookings (
@@ -475,7 +475,7 @@ def execute_booking(
                  ticket_type, fare_class, coach, seat_id, total_fare_usd, "pending")
             )
 
-            # Step 8: 插入付款
+            # Step 8: insert the matching payment
             cur.execute(
                 """
                 INSERT INTO payments (payment_id, booking_id, amount_usd, method, status, paid_at)
@@ -484,7 +484,7 @@ def execute_booking(
                 (payment_id, booking_id, total_fare_usd, "credit_card", "paid")
             )
 
-            # Step 9: 提交
+            # Step 9: commit booking + payment together (atomic)
             conn.commit()
 
         return (True, {
@@ -533,7 +533,7 @@ def execute_cancellation(
         conn.autocommit = False
 
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            # Step 1: 查詢訂票
+            # Step 1: look up the booking
             cur.execute(
                 "SELECT booking_id, user_id, status, amount_usd, booked_at "
                 "FROM national_rail_bookings WHERE booking_id = %s",
@@ -544,7 +544,7 @@ def execute_cancellation(
                 conn.rollback()
                 return (False, f"Booking {booking_id} not found")
 
-            # Step 2: 狀態機驗證
+            # Step 2: state-machine check (only pending/confirmed may be cancelled)
             current_status = booking["status"]
             if current_status not in ("pending", "confirmed"):
                 conn.rollback()
@@ -554,7 +554,7 @@ def execute_cancellation(
                     f"Only 'pending' or 'confirmed' bookings can be cancelled."
                 )
 
-            # Step 3: 更新訂票狀態
+            # Step 3: update the booking status to cancelled
             cancelled_at_timestamp = datetime.now(timezone.utc)
             cur.execute(
                 """
@@ -570,7 +570,7 @@ def execute_cancellation(
                 conn.rollback()
                 return (False, f"Failed to update booking {booking_id}")
 
-            # Step 4: 新增退款記錄
+            # Step 4: record the refund payment
             payment_id = _gen_payment_id()
             cur.execute(
                 """
@@ -625,13 +625,13 @@ def register_user(
         conn.autocommit = False
 
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            # 檢查 email 唯一性
+            # Check email uniqueness
             cur.execute("SELECT user_id FROM users WHERE email = %s", (email,))
             if cur.fetchone():
                 conn.rollback()
                 return (False, f"Email '{email}' is already registered")
 
-            # 計算下一個 user_id 序號
+            # Compute the next user_id sequence number
             cur.execute(
                 "SELECT MAX(CAST(SUBSTRING(user_id FROM 3) AS INTEGER)) AS max_seq "
                 "FROM users WHERE user_id ~ '^RU[0-9]+$'"
@@ -755,7 +755,7 @@ def query_alternative_schedules_fallback(schedule_id: str, travel_date: str) -> 
     try:
         with _connect() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-                # Step 1: 查詢原始班次
+                # Step 1: look up the original schedule
                 cur.execute(
                     "SELECT origin_station_id, destination_station_id, first_train_time "
                     "FROM national_rail_schedules WHERE schedule_id = %s",
@@ -769,7 +769,7 @@ def query_alternative_schedules_fallback(schedule_id: str, travel_date: str) -> 
                 original_departure = str(original["first_train_time"])[:5]
                 base["original_departure_time"] = original_departure
 
-                # Step 2: CTE 查詢替代班次
+                # Step 2: find alternative schedules via a CTE
                 sql = """
                     WITH bookings_count AS (
                         SELECT schedule_id, COUNT(*) AS booked_seats
@@ -940,7 +940,7 @@ def query_round_trip_itinerary(
     outbound_options = query_national_rail_availability(origin_id, destination_id, outbound_date)
     return_options = query_national_rail_availability(destination_id, origin_id, return_date)
 
-    # 取第一個可用班次的票價
+    # Take the fare of the first available schedule
     outbound_fare_usd = 0.0
     if outbound_options:
         fare_info = query_national_rail_fare(outbound_options[0]["schedule_id"], fare_class, 1)
@@ -1030,7 +1030,7 @@ def query_occupancy_forecast(schedule_id: str, lead_days: int) -> dict:
 
     with _connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            # 取總座位數
+            # Get the total seat count
             cur.execute(
                 "SELECT total_seats FROM national_rail_seat_layouts WHERE schedule_id = %s",
                 (schedule_id,)
@@ -1041,7 +1041,7 @@ def query_occupancy_forecast(schedule_id: str, lead_days: int) -> dict:
                 return base
             total_seats = int(row["total_seats"])
 
-            # 過去 7 天平均每日訂票數
+            # Average daily bookings over the past 7 days
             cur.execute(
                 """
                 SELECT COALESCE(AVG(daily_count), 0) AS avg_daily
@@ -1060,7 +1060,7 @@ def query_occupancy_forecast(schedule_id: str, lead_days: int) -> dict:
             avg_row = cur.fetchone()
             avg_daily = float(avg_row["avg_daily"]) if avg_row else 0.0
 
-            # 未來 lead_days 天的現有訂票數
+            # Existing bookings over the next lead_days days
             cur.execute(
                 """
                 SELECT travel_date, COUNT(*) AS existing_count
@@ -1103,12 +1103,12 @@ def query_user_loyalty_metrics(user_id: str) -> Optional[dict]:
     """Return loyalty metrics and badge level for a user."""
     with _connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            # 確認使用者存在
+            # Confirm the user exists
             cur.execute("SELECT user_id FROM users WHERE user_id = %s", (user_id,))
             if cur.fetchone() is None:
                 return None
 
-            # 統計訂單數和消費總額
+            # Total order count and total spending
             cur.execute(
                 """
                 SELECT COUNT(*) AS total_orders,
@@ -1122,7 +1122,7 @@ def query_user_loyalty_metrics(user_id: str) -> Optional[dict]:
             total_orders = int(stats["total_orders"])
             total_spending = float(stats["total_spending_usd"])
 
-            # 最常旅行路線
+            # Most frequently travelled route
             cur.execute(
                 """
                 WITH route_counts AS (
