@@ -30,6 +30,9 @@ from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 
 from skeleton.config import PG_DSN, VECTOR_TOP_K, VECTOR_SIMILARITY_THRESHOLD
+# Stage 3.3 — low-volatility read caches. Only fares and metro schedules are
+# cached here; seat availability and bookings must NEVER be cached (oversell risk).
+from skeleton.cache import fare_cache, schedule_cache
 
 _ph = PasswordHasher()
 
@@ -148,6 +151,12 @@ def query_national_rail_fare(
     FARE_MULTIPLIERS = {"standard": 1.0, "first": 1.5, "senior": 0.8, "student": 0.85}
     fare_multiplier = FARE_MULTIPLIERS.get(fare_class, 1.0)
 
+    # Cache by the full parameter set; a hit skips the DB round-trip entirely.
+    cache_key = f"fare:{schedule_id}:{fare_class}:{stops_travelled}"
+    cached = fare_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     with _connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
@@ -156,26 +165,34 @@ def query_national_rail_fare(
             )
             row = cur.fetchone()
             if row is None:
-                return None
+                return None  # never cache a miss — the schedule may appear later
 
             base_fare_usd = float(row["base_fare_usd"])
             total_fare_usd = round(base_fare_usd * fare_multiplier, 2)
 
-            return {
-                "schedule_id": schedule_id,
-                "fare_class": fare_class,
-                "stops_travelled": stops_travelled,
-                "base_fare_usd": base_fare_usd,
-                "fare_multiplier": fare_multiplier,
-                "total_fare_usd": total_fare_usd,
-                "currency": "USD",
-            }
+    fare_result = {
+        "schedule_id": schedule_id,
+        "fare_class": fare_class,
+        "stops_travelled": stops_travelled,
+        "base_fare_usd": base_fare_usd,
+        "fare_multiplier": fare_multiplier,
+        "total_fare_usd": total_fare_usd,
+        "currency": "USD",
+    }
+    fare_cache.set(cache_key, fare_result)
+    return fare_result
 
 
 # ── METRO SCHEDULES & FARE ────────────────────────────────────────────────────
 
 def query_metro_schedules(origin_id: str, destination_id: str) -> list[dict]:
     """Return metro schedules that serve both origin and destination in the correct order."""
+    # Schedules are stable within a day; cache by the (origin, destination) pair.
+    cache_key = f"metro_sched:{origin_id}:{destination_id}"
+    cached = schedule_cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     sql = """
         SELECT
             schedule_id, line, direction,
@@ -189,7 +206,10 @@ def query_metro_schedules(origin_id: str, destination_id: str) -> list[dict]:
     with _connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(sql, (origin_id, destination_id))
-            return [dict(row) for row in cur.fetchall()]
+            results = [dict(row) for row in cur.fetchall()]
+
+    schedule_cache.set(cache_key, results)
+    return results
 
 
 def query_metro_fare(schedule_id: str, stops_travelled: int) -> Optional[dict]:
