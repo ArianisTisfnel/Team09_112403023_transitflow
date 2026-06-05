@@ -439,34 +439,13 @@ RETURN
         name: n.name,
         network_type: n.network_type
     }] AS stations,
-    [rel IN relationships(path) | rel.travel_time_min] AS travel_times
+    [rel IN relationships(path) | rel.travel_time_min] AS travel_times,
+    [rel IN relationships(path) | {
+        rel_type:    type(rel),
+        travel_time: rel.travel_time_min
+    }] AS legs
 LIMIT 1
 """
-
-_CYPHER_INTERCHANGE_PATH_RELS = """
-MATCH (origin:Station {station_id: $origin_id})
-MATCH (destination:Station {station_id: $destination_id})
-CALL apoc.algo.allSimplePaths(
-    origin, destination,
-    'CONNECTS_TO|INTERCHANGE',
-    10
-) YIELD path
-WHERE length(path) > 0
-  AND any(rel IN relationships(path) WHERE type(rel) = 'INTERCHANGE')
-UNWIND relationships(path) AS rel
-WITH path, rel, startNode(rel) AS from_node, endNode(rel) AS to_node, type(rel) AS rel_type
-RETURN
-    from_node.station_id  AS from_id,
-    from_node.name        AS from_name,
-    from_node.network_type AS from_network,
-    to_node.station_id    AS to_id,
-    to_node.name          AS to_name,
-    to_node.network_type  AS to_network,
-    rel_type,
-    rel.travel_time_min   AS travel_time
-LIMIT 20
-"""
-
 
 def _empty_interchange_result(origin_id: str, destination_id: str, error: str) -> dict:
     return {
@@ -527,51 +506,29 @@ def query_interchange_path(origin_id: str, destination_id: str) -> dict:
                 travel_times = record["travel_times"] or []
                 total_time = sum(t for t in travel_times if t is not None)
 
-                # ── Pass 2: relationship details (type + endpoints) ──────────
-                rel_records = session.run(
-                    _CYPHER_INTERCHANGE_PATH_RELS,
-                    origin_id=origin_id,
-                    destination_id=destination_id,
-                ).data()
-
-                # Build a (from_id, to_id) -> leg-dict lookup
-                legs_map = {}
-                for r in rel_records:
-                    key = (r["from_id"], r["to_id"])
-                    if key in legs_map:
-                        continue  # keep first match for this directed pair
-                    legs_map[key] = {
-                        "from_station_id": r["from_id"],
-                        "from_station_name": r["from_name"],
-                        "to_station_id": r["to_id"],
-                        "to_station_name": r["to_name"],
-                        "from_network": r["from_network"],
-                        "to_network": r["to_network"],
+                # Build the legs from the SAME path. nodes(path) and
+                # relationships(path) share an order, so the i-th relationship
+                # connects stations[i] -> stations[i+1]; we take the endpoints from
+                # the node list (path-traversal direction) and only the type/time
+                # from the relationship. A previous version ran a second
+                # allSimplePaths query for the relationships, which could return a
+                # different path and lose the INTERCHANGE labels entirely.
+                rels = record["legs"]
+                legs = []
+                interchange_points = []
+                for i, r in enumerate(rels):
+                    frm = stations[i]
+                    to = stations[i + 1]
+                    leg = {
+                        "from_station_id": frm["station_id"],
+                        "from_station_name": frm["name"],
+                        "to_station_id": to["station_id"],
+                        "to_station_name": to["name"],
+                        "from_network": frm["network_type"],
+                        "to_network": to["network_type"],
                         "relationship_type": r["rel_type"],
                         "travel_time_min": r["travel_time"] or 0,
                     }
-
-                # Assemble legs in path order; collect INTERCHANGE points
-                legs = []
-                interchange_points = []
-                for i in range(len(station_ids) - 1):
-                    key = (station_ids[i], station_ids[i + 1])
-                    if key in legs_map:
-                        leg = legs_map[key]
-                    else:
-                        # Fallback (should be rare): synthesize from stations array
-                        frm = stations[i]
-                        to = stations[i + 1]
-                        leg = {
-                            "from_station_id": frm["station_id"],
-                            "from_station_name": frm["name"],
-                            "to_station_id": to["station_id"],
-                            "to_station_name": to["name"],
-                            "from_network": frm["network_type"],
-                            "to_network": to["network_type"],
-                            "relationship_type": "UNKNOWN",
-                            "travel_time_min": 0,
-                        }
                     legs.append(leg)
 
                     if leg["relationship_type"] == "INTERCHANGE":
