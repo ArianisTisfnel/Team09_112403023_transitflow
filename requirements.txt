@@ -13,7 +13,7 @@ google-genai>=1.0.0             # Gemini (new SDK, replaces google-generativeai)
 requests>=2.31.0             # Ollama (local)
 
 # Web UI
-gradio>=4.36.0
+gradio>=4.36.0,<5          # ui.py targets the Gradio 4.x API; 5/6 break .launch()
 
 # Observability (Stage 3.4 — Prometheus metrics)
 prometheus-client>=0.20.0

@@ -7,7 +7,10 @@ Then open: http://localhost:7860
 Students: You do NOT need to change this file.
 """
 
+import queue
 import sys
+import threading
+
 sys.path.insert(0, ".")
 
 import gradio as gr
@@ -32,30 +35,109 @@ SECRET_QUESTIONS = [
 ]
 
 
+# ── Tool → progress message map ────────────────────────────────────────────────
+
+_TOOL_STATUS: dict[str, str] = {
+    "check_national_rail_availability": "🔄 正在查詢國鐵班次...",
+    "get_national_rail_fare":           "🔄 計算國鐵票價中...",
+    "check_metro_availability":         "🔄 正在查詢地鐵班次...",
+    "calculate_metro_fare":             "🔄 計算地鐵票價中...",
+    "get_metro_fare":                   "🔄 查詢地鐵票價中...",
+    "get_available_seats":              "🔄 查詢可用座位中...",
+    "make_booking":                     "🔄 確認訂票資訊中...",
+    "cancel_booking":                   "🔄 處理取消訂票中...",
+    "get_user_bookings":                "🔄 載入訂票記錄中...",
+    "search_policy":                    "🔄 搜尋政策文件中...",
+    "find_route":                       "🔄 計算最佳路線中...",
+    "find_alternative_routes":          "🔄 搜尋替代路線中...",
+    "get_delay_ripple":                 "🔄 分析延誤影響範圍中...",
+}
+
+
 # ── Chat handler ───────────────────────────────────────────────────────────────
 
 def chat(user_message: str, history_display: list, agent_history: list,
          show_debug: bool, current_user: str):
+    """
+    Generator-based chat handler.  Yields intermediate progress messages as
+    each database tool executes, then yields the final answer.  No sleep —
+    every yield corresponds to a real tool invocation in the agent.
+    """
     if not user_message.strip():
-        return history_display, agent_history, gr.update()
+        return
 
-    if show_debug:
-        answer, new_agent_history, debug_text = run_agent(
-            user_message, agent_history, debug=True, current_user_email=current_user
+    # Immediately echo the user message with a "thinking" placeholder so the
+    # UI unfreezes right away — the agent hasn't started yet at this point.
+    yield (
+        history_display + [
+            {"role": "user",      "content": user_message},
+            {"role": "assistant", "content": "🔄 正在分析您的問題..."},
+        ],
+        agent_history,
+        gr.update(visible=False),
+    )
+
+    progress_q: queue.Queue = queue.Queue()
+    result_container: list = []
+
+    def _run_agent():
+        try:
+            if show_debug:
+                answer, new_history, debug_text = run_agent(
+                    user_message, agent_history,
+                    debug=True, current_user_email=current_user,
+                    progress_callback=progress_q.put,
+                )
+            else:
+                answer, new_history = run_agent(
+                    user_message, agent_history,
+                    debug=False, current_user_email=current_user,
+                    progress_callback=progress_q.put,
+                )
+                debug_text = ""
+            result_container.append((answer, new_history, debug_text))
+        except Exception as exc:
+            result_container.append(exc)
+        finally:
+            progress_q.put(None)  # sentinel — signals completion
+
+    thread = threading.Thread(target=_run_agent, daemon=True)
+    thread.start()
+
+    # Yield a status update for each tool as it starts executing.
+    while True:
+        tool_name = progress_q.get()
+        if tool_name is None:
+            break
+        status_text = _TOOL_STATUS.get(tool_name, f"🔄 正在執行 {tool_name}...")
+        yield (
+            history_display + [
+                {"role": "user",      "content": user_message},
+                {"role": "assistant", "content": status_text},
+            ],
+            agent_history,
+            gr.update(visible=False),
         )
-    else:
-        answer, new_agent_history = run_agent(
-            user_message, agent_history, debug=False, current_user_email=current_user
-        )
-        debug_text = ""
 
-    history_display = history_display + [
-        {"role": "user",      "content": user_message},
-        {"role": "assistant", "content": answer},
-    ]
+    thread.join()
 
+    if not result_container:
+        return
+
+    outcome = result_container[0]
+    if isinstance(outcome, Exception):
+        raise outcome
+
+    answer, new_agent_history, debug_text = outcome
     debug_update = gr.update(value=debug_text, visible=show_debug)
-    return history_display, new_agent_history, debug_update
+    yield (
+        history_display + [
+            {"role": "user",      "content": user_message},
+            {"role": "assistant", "content": answer},
+        ],
+        new_agent_history,
+        debug_update,
+    )
 
 
 def clear_conversation():
@@ -493,6 +575,9 @@ with gr.Blocks(title="TransitFlow") as demo:
 
 
 if __name__ == "__main__":
+    from skeleton.vector_warmup import warmup_policy_cache
+    warmup_policy_cache()
+
     demo.launch(
         server_name="0.0.0.0",
         server_port=7860,
