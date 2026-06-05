@@ -1,0 +1,156 @@
+// TransitFlow ER diagram — paste into https://dbdiagram.io to render & export a PNG.
+// Mirrors databases/relational/schema.sql. Cardinality shows on the relationship lines.
+
+Table users {
+  user_id         varchar(20)  [pk]
+  full_name       varchar(100) [not null]
+  email           varchar(255) [unique, not null]
+  phone           varchar(20)
+  date_of_birth   date
+  registered_at   timestamptz  [not null]
+  is_active       boolean      [not null, default: true]
+  password        varchar(255) [note: 'argon2id hash — never plain text']
+  secret_question varchar(500)
+  secret_answer   varchar(255)
+}
+
+Table national_rail_stations {
+  national_rail_station_id     varchar(20)  [pk]
+  name                         varchar(100) [not null]
+  lines                        jsonb        [note: 'array of line codes']
+  is_interchange_national_rail boolean
+  is_interchange_metro         boolean
+  interchange_metro_station_id varchar(20)  [note: 'circular FK -> metro_stations (DEFERRABLE)']
+}
+
+Table metro_stations {
+  metro_station_id                     varchar(20)  [pk]
+  name                                 varchar(100) [not null]
+  lines                                jsonb        [note: 'array of line codes']
+  is_interchange_metro                 boolean
+  is_interchange_national_rail         boolean
+  interchange_national_rail_station_id varchar(20)  [note: 'circular FK -> national_rail_stations (DEFERRABLE)']
+}
+
+Table metro_station_adjacencies {
+  adjacency_id           serial      [pk]
+  origin_station_id      varchar(20) [not null]
+  destination_station_id varchar(20) [not null]
+  line                   varchar(20) [not null]
+  travel_time_min        integer     [not null]
+  created_at             timestamptz
+}
+
+Table metro_schedules {
+  schedule_id            varchar(30)  [pk]
+  line                   varchar(20)  [not null]
+  direction              varchar(20)  [not null]
+  origin_station_id      varchar(20)  [not null]
+  destination_station_id varchar(20)  [not null]
+  first_train_time       time         [not null]
+  last_train_time        time         [not null]
+  base_fare_usd          numeric      [not null]
+  operating_days         jsonb        [note: 'array of weekdays']
+  created_at             timestamptz
+}
+
+Table national_rail_schedules {
+  schedule_id            varchar(30) [pk]
+  line                   varchar(20) [not null]
+  service_type           varchar(20) [not null]
+  direction              varchar(20) [not null]
+  origin_station_id      varchar(20) [not null]
+  destination_station_id varchar(20) [not null]
+  first_train_time       time        [not null]
+  last_train_time        time        [not null]
+  base_fare_usd          numeric     [not null]
+  created_at             timestamptz
+}
+
+Table national_rail_seat_layouts {
+  layout_id   varchar(30) [pk]
+  schedule_id varchar(30) [not null]
+  coaches     jsonb       [note: 'denormalised coach/seat tree']
+  total_seats integer     [not null]
+  created_at  timestamptz
+}
+
+Table national_rail_bookings {
+  booking_id             varchar(30)  [pk]
+  user_id                varchar(20)  [not null]
+  schedule_id            varchar(30)  [not null]
+  origin_station_id      varchar(20)  [not null]
+  destination_station_id varchar(20)  [not null]
+  travel_date            date         [not null]
+  departure_time         time         [not null]
+  ticket_type            varchar(20)  [not null]
+  fare_class             varchar(20)  [not null]
+  coach                  varchar(10)
+  seat_id                varchar(20)
+  amount_usd             numeric      [not null]
+  status                 varchar(20)  [not null]
+  booked_at              timestamptz  [not null]
+  travelled_at           timestamptz
+  cancelled_at           timestamptz
+  cancellation_reason    varchar(500)
+}
+
+Table metro_travel_history {
+  trip_id                varchar(30) [pk]
+  user_id                varchar(20) [not null]
+  schedule_id            varchar(30) [not null]
+  origin_station_id      varchar(20) [not null]
+  destination_station_id varchar(20) [not null]
+  travel_date            date        [not null]
+  ticket_type            varchar(20) [not null]
+  amount_usd             numeric     [not null]
+  status                 varchar(20) [not null]
+  purchased_at           timestamptz [not null]
+  travelled_at           timestamptz
+}
+
+Table payments {
+  payment_id  varchar(30) [pk]
+  booking_id  varchar(30) [not null, note: 'polymorphic: BK* booking or MT* trip — intentionally NO FK']
+  amount_usd  numeric     [not null]
+  method      varchar(30) [not null]
+  status      varchar(20) [not null]
+  paid_at     timestamptz [not null]
+  refunded_at timestamptz
+}
+
+Table policy_documents {
+  id          serial       [pk]
+  title       varchar(200) [not null]
+  category    varchar(50)  [not null]
+  content     text         [not null]
+  embedding   varchar      [note: 'pgvector vector(768) — Ollama nomic-embed-text']
+  source_file varchar(200)
+  created_at  timestamptz
+}
+
+// ── Relationships (cardinality shown on the lines) ────────────────────────────
+Ref: metro_stations.interchange_national_rail_station_id - national_rail_stations.national_rail_station_id
+Ref: national_rail_stations.interchange_metro_station_id - metro_stations.metro_station_id
+
+Ref: metro_station_adjacencies.origin_station_id > metro_stations.metro_station_id
+Ref: metro_station_adjacencies.destination_station_id > metro_stations.metro_station_id
+
+Ref: metro_schedules.origin_station_id > metro_stations.metro_station_id
+Ref: metro_schedules.destination_station_id > metro_stations.metro_station_id
+Ref: national_rail_schedules.origin_station_id > national_rail_stations.national_rail_station_id
+Ref: national_rail_schedules.destination_station_id > national_rail_stations.national_rail_station_id
+
+Ref: national_rail_seat_layouts.schedule_id > national_rail_schedules.schedule_id
+
+Ref: national_rail_bookings.user_id > users.user_id
+Ref: national_rail_bookings.schedule_id > national_rail_schedules.schedule_id
+Ref: national_rail_bookings.origin_station_id > national_rail_stations.national_rail_station_id
+Ref: national_rail_bookings.destination_station_id > national_rail_stations.national_rail_station_id
+
+Ref: metro_travel_history.user_id > users.user_id
+Ref: metro_travel_history.schedule_id > metro_schedules.schedule_id
+Ref: metro_travel_history.origin_station_id > metro_stations.metro_station_id
+Ref: metro_travel_history.destination_station_id > metro_stations.metro_station_id
+
+// payments.booking_id has NO Ref — it is a polymorphic key (see Section 2 of the design doc).
