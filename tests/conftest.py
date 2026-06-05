@@ -22,7 +22,6 @@ collect_ignore = [
     "unit/test_maintenance_check.py",          # needs skeleton.maintenance_check (not yet ported)
     "unit/test_query_round_trip_itinerary.py", # round-trip + Stage 3 exception behaviour (revisit)
     "integration/test_e2e_stage1_to_stage3.py",# end-to-end across all of Stage 3
-    "unit/test_phase_3.4_ui_observability.py", # needs health_check / ui generator (Stage 3.4)
 ]
 
 
