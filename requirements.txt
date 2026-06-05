@@ -15,5 +15,8 @@ requests>=2.31.0             # Ollama (local)
 # Web UI
 gradio>=4.36.0
 
+# Observability (Stage 3.4 — Prometheus metrics)
+prometheus-client>=0.20.0
+
 # Utilities
 python-dotenv>=1.0.0         # Load .env file
