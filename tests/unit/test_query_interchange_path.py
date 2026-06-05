@@ -26,54 +26,22 @@ def test_query_interchange_path_found():
         mock_get_pool.return_value.__enter__.return_value = mock_driver
         mock_driver.session.return_value.__enter__.return_value = mock_session
         
-        # Mock first query result (path finding with INTERCHANGE)
+        # query_interchange_path runs ONE query: the record carries the path's
+        # nodes/times plus a per-edge `legs` list (rel type + time) in path order.
         mock_result_1 = MagicMock()
         mock_record_1 = {
             "station_ids": mock_station_ids,
             "stations": mock_stations,
             "travel_times": [2, 1, 3],
+            "legs": [
+                {"rel_type": "CONNECTS_TO", "travel_time": 2},   # MS03 -> MS04
+                {"rel_type": "INTERCHANGE", "travel_time": 1},   # MS04 -> NR05
+                {"rel_type": "CONNECTS_TO", "travel_time": 3},   # NR05 -> NR06
+            ],
         }
         mock_result_1.single.return_value = mock_record_1
-        
-        # Mock second query result (relationship details)
-        mock_result_2 = MagicMock()
-        mock_rel_records = [
-            {
-                "from_id": "MS03",
-                "from_name": "Metro Station 3",
-                "from_network": "metro",
-                "to_id": "MS04",
-                "to_name": "Metro Station 4",
-                "to_network": "metro",
-                "rel_type": "CONNECTS_TO",
-                "travel_time": 2,
-            },
-            {
-                "from_id": "MS04",
-                "from_name": "Metro Station 4",
-                "from_network": "metro",
-                "to_id": "NR05",
-                "to_name": "National Rail 5",
-                "to_network": "national_rail",
-                "rel_type": "INTERCHANGE",
-                "travel_time": 1,
-            },
-            {
-                "from_id": "NR05",
-                "from_name": "National Rail 5",
-                "from_network": "national_rail",
-                "to_id": "NR06",
-                "to_name": "National Rail 6",
-                "to_network": "national_rail",
-                "rel_type": "CONNECTS_TO",
-                "travel_time": 3,
-            },
-        ]
-        mock_result_2.data.return_value = mock_rel_records
-        
-        # Configure mock session to return different results for different queries
-        mock_session.run.side_effect = [mock_result_1, mock_result_2]
-        
+        mock_session.run.return_value = mock_result_1
+
         # Call function
         result = query_interchange_path("MS03", "NR06")
         
