@@ -463,7 +463,7 @@ class TestMetroScheduleCacheIntegration:
 
     def _schedule_row(self):
         return {
-            "schedule_id": "MS_SCH01",
+            "schedule_id": "M1_SCH01",
             "line": "M1",
             "direction": "northbound",
             "origin_station_id": "MS01",
@@ -472,66 +472,46 @@ class TestMetroScheduleCacheIntegration:
             "last_train_time": "23:00",
             "base_fare_usd": 1.50,
             "operating_days": ["Mon", "Tue", "Wed", "Thu", "Fri"],
-            "travel_date": "2026-06-02",
         }
 
     def test_first_call_queries_database(self):
         mock_connect, _, _ = _make_connect_mock(fetchall_return=[self._schedule_row()])
         with patch("databases.relational.queries._connect", mock_connect):
             from databases.relational.queries import query_metro_schedules
-            query_metro_schedules("M1")
+            query_metro_schedules("MS01", "MS10")
         mock_connect.assert_called_once()
 
     def test_repeated_call_with_same_args_skips_database(self):
         mock_connect, _, _ = _make_connect_mock(fetchall_return=[self._schedule_row()])
         with patch("databases.relational.queries._connect", mock_connect):
             from databases.relational.queries import query_metro_schedules
-            query_metro_schedules("M1")
-            query_metro_schedules("M1")
+            query_metro_schedules("MS01", "MS10")
+            query_metro_schedules("MS01", "MS10")
         assert mock_connect.call_count == 1
 
     def test_cache_hit_returns_same_result(self):
         mock_connect, _, _ = _make_connect_mock(fetchall_return=[self._schedule_row()])
         with patch("databases.relational.queries._connect", mock_connect):
             from databases.relational.queries import query_metro_schedules
-            r1 = query_metro_schedules("M1")
-            r2 = query_metro_schedules("M1")
+            r1 = query_metro_schedules("MS01", "MS10")
+            r2 = query_metro_schedules("MS01", "MS10")
         assert r1 == r2
 
-    def test_different_line_hits_database_again(self):
+    def test_different_station_pair_hits_database_again(self):
         mock_connect, _, _ = _make_connect_mock(fetchall_return=[self._schedule_row()])
         with patch("databases.relational.queries._connect", mock_connect):
             from databases.relational.queries import query_metro_schedules
-            query_metro_schedules("M1")
-            query_metro_schedules("M2")
+            query_metro_schedules("MS01", "MS10")
+            query_metro_schedules("MS01", "MS20")
         assert mock_connect.call_count == 2
 
-    def test_different_direction_hits_database_again(self):
-        mock_connect, _, _ = _make_connect_mock(fetchall_return=[self._schedule_row()])
-        with patch("databases.relational.queries._connect", mock_connect):
-            from databases.relational.queries import query_metro_schedules
-            query_metro_schedules("M1", direction="northbound")
-            query_metro_schedules("M1", direction="southbound")
-        assert mock_connect.call_count == 2
-
-    def test_cache_key_contains_line_direction_date(self):
+    def test_cache_key_contains_origin_and_destination(self):
         from skeleton.cache import schedule_cache
         mock_connect, _, _ = _make_connect_mock(fetchall_return=[self._schedule_row()])
         with patch("databases.relational.queries._connect", mock_connect):
             from databases.relational.queries import query_metro_schedules
-            query_metro_schedules("M1", direction="northbound", travel_date="2026-06-02")
-        expected_key = "metro_sched:M1:northbound:2026-06-02"
-        assert schedule_cache.get(expected_key) is not None
-
-    def test_cache_key_defaults_for_none_params(self):
-        """None direction/date must fall back to 'all'/'today' in the key."""
-        from skeleton.cache import schedule_cache
-        mock_connect, _, _ = _make_connect_mock(fetchall_return=[self._schedule_row()])
-        with patch("databases.relational.queries._connect", mock_connect):
-            from databases.relational.queries import query_metro_schedules
-            query_metro_schedules("M2")
-        expected_key = "metro_sched:M2:all:today"
-        assert schedule_cache.get(expected_key) is not None
+            query_metro_schedules("MS01", "MS10")
+        assert schedule_cache.get("metro_sched:MS01:MS10") is not None
 
 
 # ═════════════════════════════════════════════════════════════════════════════
