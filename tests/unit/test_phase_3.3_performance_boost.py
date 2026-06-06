@@ -375,7 +375,7 @@ class TestFareCacheIntegration:
 
     def test_first_call_queries_database(self):
         mock_connect, _, _ = _make_connect_mock(
-            fetchone_return={"base_fare_usd": 50.0}
+            fetchone_return={"base_fare_usd": 50.0, "per_stop_rate_usd": 0.0}
         )
         with patch("databases.relational.queries._connect", mock_connect):
             from databases.relational.queries import query_national_rail_fare
@@ -385,7 +385,7 @@ class TestFareCacheIntegration:
     def test_second_call_with_same_args_skips_database(self):
         """Cache hit: DB must not be called on the second identical request."""
         mock_connect, _, _ = _make_connect_mock(
-            fetchone_return={"base_fare_usd": 50.0}
+            fetchone_return={"base_fare_usd": 50.0, "per_stop_rate_usd": 0.0}
         )
         with patch("databases.relational.queries._connect", mock_connect):
             from databases.relational.queries import query_national_rail_fare
@@ -396,7 +396,7 @@ class TestFareCacheIntegration:
 
     def test_cache_hit_returns_same_result(self):
         mock_connect, _, _ = _make_connect_mock(
-            fetchone_return={"base_fare_usd": 50.0}
+            fetchone_return={"base_fare_usd": 50.0, "per_stop_rate_usd": 0.0}
         )
         with patch("databases.relational.queries._connect", mock_connect):
             from databases.relational.queries import query_national_rail_fare
@@ -406,7 +406,7 @@ class TestFareCacheIntegration:
 
     def test_different_fare_class_hits_database_again(self):
         mock_connect, _, _ = _make_connect_mock(
-            fetchone_return={"base_fare_usd": 50.0}
+            fetchone_return={"base_fare_usd": 50.0, "per_stop_rate_usd": 0.0}
         )
         with patch("databases.relational.queries._connect", mock_connect):
             from databases.relational.queries import query_national_rail_fare
@@ -417,7 +417,7 @@ class TestFareCacheIntegration:
 
     def test_different_stations_hit_database_again(self):
         mock_connect, _, _ = _make_connect_mock(
-            fetchone_return={"base_fare_usd": 50.0}
+            fetchone_return={"base_fare_usd": 50.0, "per_stop_rate_usd": 0.0}
         )
         with patch("databases.relational.queries._connect", mock_connect):
             from databases.relational.queries import query_national_rail_fare
@@ -429,7 +429,7 @@ class TestFareCacheIntegration:
         """Cached key in fare_cache must encode all three dimensions."""
         from skeleton.cache import fare_cache
         mock_connect, _, _ = _make_connect_mock(
-            fetchone_return={"base_fare_usd": 40.0}
+            fetchone_return={"base_fare_usd": 40.0, "per_stop_rate_usd": 0.0}
         )
         with patch("databases.relational.queries._connect", mock_connect):
             from databases.relational.queries import query_national_rail_fare

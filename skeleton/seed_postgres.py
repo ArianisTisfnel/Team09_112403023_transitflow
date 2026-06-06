@@ -220,7 +220,7 @@ def seed_metro_schedules(cur):
         "schedule_id", "line", "direction",
         "origin_station_id", "destination_station_id",
         "first_train_time", "last_train_time",
-        "base_fare_usd", "created_at",
+        "base_fare_usd", "per_stop_rate_usd", "created_at",
     ]
     rows = []
 
@@ -234,6 +234,7 @@ def seed_metro_schedules(cur):
             item.get("first_train_time"),
             item.get("last_train_time"),
             float(item.get("base_fare_usd", 0)),
+            float(item.get("per_stop_rate_usd", 0)),
             item.get("created_at", "2026-01-01T00:00:00Z"),
         ))
 
@@ -281,6 +282,34 @@ def seed_national_rail_schedules(cur):
 
     count = insert_many(cur, "national_rail_schedules", columns, rows)
     print(f"  [national_rail_schedules] Inserted {count} rows")
+
+
+def seed_national_rail_fare_classes(cur):
+    """
+    Seed national_rail_fare_classes from the nested fare_classes object in
+    national_rail_schedules.json. One row per (schedule_id, fare_class), carrying
+    that class's base_fare_usd and per_stop_rate_usd so query_national_rail_fare
+    can price each class as base + per_stop * stops.
+    """
+    data = load("national_rail_schedules.json")
+    if not data:
+        print("  [national_rail_fare_classes] No data to load.")
+        return
+
+    columns = ["schedule_id", "fare_class", "base_fare_usd", "per_stop_rate_usd"]
+    rows = []
+
+    for item in data:
+        schedule_id = item.get("schedule_id")
+        for fare_class, vals in (item.get("fare_classes") or {}).items():
+            base = float(vals.get("base_fare_usd", 0))
+            per_stop = float(vals.get("per_stop_rate_usd", 0))
+            if base <= 0:
+                continue  # schema requires base_fare_usd > 0
+            rows.append((schedule_id, fare_class, base, per_stop))
+
+    count = insert_many(cur, "national_rail_fare_classes", columns, rows)
+    print(f"  [national_rail_fare_classes] Inserted {count} rows")
 
 
 def seed_national_rail_seat_layouts(cur):
@@ -568,6 +597,7 @@ def main():
         # Phase 2: schedules and layouts
         seed_metro_schedules(cur)
         seed_national_rail_schedules(cur)
+        seed_national_rail_fare_classes(cur)
         seed_national_rail_seat_layouts(cur)
 
         # Phase 3: bookings and trips

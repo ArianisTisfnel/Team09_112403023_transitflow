@@ -45,7 +45,7 @@ docker compose ps        # 等兩個 DB 容器顯示 "healthy"
 
 # 5. Seed 三個資料庫（冪等，可安全重跑）
 python skeleton/seed_postgres.py     # 關聯式表格（密碼以 argon2 雜湊）
-python skeleton/seed_neo4j.py        # 圖形：Station 節點 + CONNECTS_TO / INTERCHANGE
+python skeleton/seed_neo4j.py        # 圖形：MetroStation/NationalRailStation 節點 + METRO_LINK / RAIL_LINK / INTERCHANGE_TO
 python skeleton/seed_vectors.py      # pgvector 政策文件嵌入
 
 # 6. 啟動助理

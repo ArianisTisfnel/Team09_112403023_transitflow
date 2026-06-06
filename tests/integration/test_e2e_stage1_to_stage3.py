@@ -77,9 +77,11 @@ def _make_mock_db():
         }
     ]
     db.query_metro_fare.return_value = {
-        "fare_usd": 2.50,
-        "fare_tier": "3-5 stops",
-        "distance_stops": 4,
+        "schedule_id": "MS_SCH01",
+        "stops_travelled": 4,
+        "base_fare_usd": 0.80,
+        "per_stop_rate_usd": 0.30,
+        "total_fare_usd": 2.00,
     }
     db.query_available_seats.return_value = [
         {"seat_id": "A01", "coach": "A", "row": 1, "column": "A", "is_available": True},
@@ -874,7 +876,7 @@ class TestStage3ExcellenceLayer:
         assert fare_cache.get(cache_key) is None
 
         mock_conn, mock_cur = _make_conn_mock(
-            fetchone_values=[{"base_fare_usd": 8.50}],
+            fetchone_values=[{"base_fare_usd": 8.50, "per_stop_rate_usd": 0.0}],
         )
         with patch("databases.relational.queries._connect", return_value=mock_conn) as mc:
             query_national_rail_fare("NR01", "NR05", "standard")

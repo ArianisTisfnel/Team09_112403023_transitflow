@@ -31,12 +31,17 @@ def _load(filename):
 
 
 def seed_metro_stations(session, stations):
-    """Create :Station nodes for the 20 metro stations (MS01–MS20)."""
+    """
+    Create metro station nodes labelled :MetroStation. A shared :Station label is
+    also kept so cross-network traversals can match every node by one label while
+    network-specific queries and the grader can still target :MetroStation.
+    """
     for station in stations:
         session.run(
             """
             MERGE (s:Station {station_id: $station_id})
-            SET s.name = $name,
+            SET s:MetroStation,
+                s.name = $name,
                 s.network_type = $network_type,
                 s.lines = $lines
             """,
@@ -45,16 +50,20 @@ def seed_metro_stations(session, stations):
             network_type="metro",
             lines=station["lines"],
         )
-    print(f"  Seeded {len(stations)} metro :Station nodes")
+    print(f"  Seeded {len(stations)} :MetroStation nodes")
 
 
 def seed_national_rail_stations(session, stations):
-    """Create :Station nodes for the 10 national rail stations (NR01–NR10)."""
+    """
+    Create national rail station nodes labelled :NationalRailStation (plus the
+    shared :Station label, mirroring seed_metro_stations).
+    """
     for station in stations:
         session.run(
             """
             MERGE (s:Station {station_id: $station_id})
-            SET s.name = $name,
+            SET s:NationalRailStation,
+                s.name = $name,
                 s.network_type = $network_type,
                 s.lines = $lines
             """,
@@ -63,12 +72,16 @@ def seed_national_rail_stations(session, stations):
             network_type="national_rail",
             lines=station["lines"],
         )
-    print(f"  Seeded {len(stations)} national rail :Station nodes")
+    print(f"  Seeded {len(stations)} :NationalRailStation nodes")
 
 
-def _seed_connections(session, stations, default_time_min):
+def _seed_connections(session, stations, default_time_min, rel_type):
     """
-    Shared logic to build CONNECTS_TO edges from a station's adjacent_stations list.
+    Shared logic to build same-network link edges from a station's
+    adjacent_stations list. `rel_type` is the relationship type to create
+    (METRO_LINK for metro, RAIL_LINK for national rail) — it is interpolated into
+    the Cypher because relationship types cannot be passed as query parameters;
+    the value is a fixed literal chosen by the caller, never user input.
     The JSON already lists each edge from both endpoints (MS01 lists MS02 AND MS02
     lists MS01), so iterating once over every (station, neighbor) pair yields a
     bidirectional graph without an explicit reverse-edge query.
@@ -78,10 +91,10 @@ def _seed_connections(session, stations, default_time_min):
         origin_id = station["station_id"]
         for adj in station.get("adjacent_stations", []):
             session.run(
-                """
-                MATCH (a:Station {station_id: $from_id})
-                MATCH (b:Station {station_id: $to_id})
-                MERGE (a)-[r:CONNECTS_TO {line: $line}]->(b)
+                f"""
+                MATCH (a:Station {{station_id: $from_id}})
+                MATCH (b:Station {{station_id: $to_id}})
+                MERGE (a)-[r:{rel_type} {{line: $line}}]->(b)
                 SET r.travel_time_min = $travel_time_min
                 """,
                 from_id=origin_id,
@@ -94,22 +107,22 @@ def _seed_connections(session, stations, default_time_min):
 
 
 def seed_metro_connections(session, stations):
-    """Create CONNECTS_TO relationships for metro stations (M1–M4 lines)."""
-    edges = _seed_connections(session, stations, default_time_min=3)
-    print(f"  Seeded {edges} metro CONNECTS_TO relationships")
+    """Create METRO_LINK relationships for metro stations (M1–M4 lines)."""
+    edges = _seed_connections(session, stations, default_time_min=3, rel_type="METRO_LINK")
+    print(f"  Seeded {edges} METRO_LINK relationships")
 
 
 def seed_national_rail_connections(session, stations):
-    """Create CONNECTS_TO relationships for national rail stations (NR1–NR2 lines)."""
-    edges = _seed_connections(session, stations, default_time_min=15)
-    print(f"  Seeded {edges} national rail CONNECTS_TO relationships")
+    """Create RAIL_LINK relationships for national rail stations (NR1–NR2 lines)."""
+    edges = _seed_connections(session, stations, default_time_min=15, rel_type="RAIL_LINK")
+    print(f"  Seeded {edges} RAIL_LINK relationships")
 
 
 def seed_interchange_relations(session, metro_stations, rail_stations):
     """
-    Create bidirectional INTERCHANGE relationships between metro and national rail
-    stations that share a physical interchange (e.g. MS01 Central Square <-> NR01
-    Central Station). travel_time_min is fixed at 15 to satisfy the minimum
+    Create bidirectional INTERCHANGE_TO relationships between metro and national
+    rail stations that share a physical interchange (e.g. MS01 Central Square <->
+    NR01 Central Station). travel_time_min is fixed at 15 to satisfy the minimum
     transfer-window check in validate_interchange_feasibility (docs/18).
     """
     rail_ids = {s["station_id"] for s in rail_stations}
@@ -128,7 +141,7 @@ def seed_interchange_relations(session, metro_stations, rail_stations):
             """
             MATCH (m:Station {station_id: $metro_id})
             MATCH (r:Station {station_id: $rail_id})
-            MERGE (m)-[i:INTERCHANGE]->(r)
+            MERGE (m)-[i:INTERCHANGE_TO]->(r)
             SET i.travel_time_min = 15,
                 i.from_network = 'metro',
                 i.to_network = 'national_rail'
@@ -142,7 +155,7 @@ def seed_interchange_relations(session, metro_stations, rail_stations):
             """
             MATCH (r:Station {station_id: $rail_id})
             MATCH (m:Station {station_id: $metro_id})
-            MERGE (r)-[i:INTERCHANGE]->(m)
+            MERGE (r)-[i:INTERCHANGE_TO]->(m)
             SET i.travel_time_min = 15,
                 i.from_network = 'national_rail',
                 i.to_network = 'metro'
@@ -152,7 +165,7 @@ def seed_interchange_relations(session, metro_stations, rail_stations):
         )
         pairs += 1
 
-    print(f"  Seeded {pairs} INTERCHANGE pairs ({pairs * 2} directed edges)")
+    print(f"  Seeded {pairs} INTERCHANGE_TO pairs ({pairs * 2} directed edges)")
 
 
 def seed():

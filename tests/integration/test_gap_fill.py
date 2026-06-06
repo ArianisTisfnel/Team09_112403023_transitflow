@@ -272,16 +272,16 @@ class TestQueryStationConnectionsIntegration:
         assert isinstance(result, list)
         assert len(result) >= 4   # MS01 connects to MS02, MS05, MS06, MS07, NR01
 
-    def test_ms01_has_connects_to_relationships(self):
+    def test_ms01_has_metro_link_relationships(self):
         from databases.graph.queries import query_station_connections
         result = query_station_connections("MS01")
         types = {r["relationship_type"] for r in result}
-        assert "CONNECTS_TO" in types
+        assert "METRO_LINK" in types
 
     def test_ms01_has_interchange_to_nr01(self):
         from databases.graph.queries import query_station_connections
         result = query_station_connections("MS01")
-        interchange = [r for r in result if r["relationship_type"] == "INTERCHANGE"]
+        interchange = [r for r in result if r["relationship_type"] == "INTERCHANGE_TO"]
         assert any(r["to_station_id"] == "NR01" for r in interchange)
 
     def test_each_connection_has_required_keys(self):
@@ -293,11 +293,11 @@ class TestQueryStationConnectionsIntegration:
         for conn in result:
             assert required.issubset(conn.keys()), f"Missing keys in: {conn}"
 
-    def test_connects_to_relationships_have_travel_time(self):
+    def test_same_network_links_have_travel_time(self):
         from databases.graph.queries import query_station_connections
         result = query_station_connections("MS01")
         for conn in result:
-            if conn["relationship_type"] == "CONNECTS_TO":
+            if conn["relationship_type"] in ("METRO_LINK", "RAIL_LINK"):
                 assert conn["travel_time_min"] is not None
                 assert conn["travel_time_min"] > 0
 
@@ -329,8 +329,8 @@ class TestQueryShortestRouteIntegration:
     Integration tests for query_shortest_route (APOC Dijkstra).
 
     Station topology reference (from metro_stations.json / seed_neo4j.py):
-      - MS01 (Central Square) directly connects to MS02, MS05, MS06, MS07 via CONNECTS_TO
-        and to NR01 via INTERCHANGE
+      - MS01 (Central Square) directly connects to MS02, MS05, MS06, MS07 via METRO_LINK
+        and to NR01 via INTERCHANGE_TO
       - The shortest metro path MS01 → MS09 passes through 4 hops
         (station_ids: [MS01, MS03, MS06, MS08, MS09], per doc-16 example)
     """

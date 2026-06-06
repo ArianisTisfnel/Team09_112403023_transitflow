@@ -33,7 +33,7 @@
 | 檔案 | 修改內容 | 受影響函式 / cache key |
 |---|---|---|
 | `databases/relational/queries.py` | 票價／班次查詢加入「先查快取、命中跳過 DB、miss 不快取」 | `query_national_rail_fare`（key `fare:{schedule_id}:{fare_class}:{stops_travelled}`）、`query_metro_schedules`（key `metro_sched:{origin_id}:{destination_id}`） |
-| `databases/graph/queries.py` | 6 個查詢改用 `with get_pool() as driver:`，移除 per-query driver 工廠 | `query_shortest_route`、`query_interchange_path`、`query_station_connections`、`query_delay_propagation` 等 |
+| `databases/graph/queries.py` | 6 個查詢改用 `with get_pool() as driver:`，移除 per-query driver 工廠 | `query_shortest_route`、`query_interchange_path`、`query_station_connections`、`query_delay_ripple` 等 |
 
 ### 受影響的資料表 / 資料來源
 
@@ -42,7 +42,7 @@
 | PostgreSQL | `national_rail_schedules` | 票價查詢來源 → 結果進 `fare_cache` |
 | PostgreSQL | `metro_schedules` | 班次查詢來源 → 結果進 `schedule_cache` |
 | PostgreSQL + pgvector | `policy_documents` | 啟動時前 50 筆預載進 `policy_cache` |
-| Neo4j | `:Station` 節點 / `CONNECTS_TO`、`INTERCHANGE` 關係 | 透過 `get_pool()` 共用連線池查詢 |
+| Neo4j | `:MetroStation` / `:NationalRailStation` 節點 / `METRO_LINK`、`RAIL_LINK`、`INTERCHANGE_TO` 關係 | 透過 `get_pool()` 共用連線池查詢 |
 
 ### 安全邊界（不快取，避免超賣）
 
