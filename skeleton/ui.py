@@ -38,19 +38,19 @@ SECRET_QUESTIONS = [
 # ── Tool → progress message map ────────────────────────────────────────────────
 
 _TOOL_STATUS: dict[str, str] = {
-    "check_national_rail_availability": "🔄 正在查詢國鐵班次...",
-    "get_national_rail_fare":           "🔄 計算國鐵票價中...",
-    "check_metro_availability":         "🔄 正在查詢地鐵班次...",
-    "calculate_metro_fare":             "🔄 計算地鐵票價中...",
-    "get_metro_fare":                   "🔄 查詢地鐵票價中...",
-    "get_available_seats":              "🔄 查詢可用座位中...",
-    "make_booking":                     "🔄 確認訂票資訊中...",
-    "cancel_booking":                   "🔄 處理取消訂票中...",
-    "get_user_bookings":                "🔄 載入訂票記錄中...",
-    "search_policy":                    "🔄 搜尋政策文件中...",
-    "find_route":                       "🔄 計算最佳路線中...",
-    "find_alternative_routes":          "🔄 搜尋替代路線中...",
-    "get_delay_ripple":                 "🔄 分析延誤影響範圍中...",
+    "check_national_rail_availability": "🔄 Checking national rail services...",
+    "get_national_rail_fare":           "🔄 Calculating national rail fare...",
+    "check_metro_availability":         "🔄 Checking metro services...",
+    "calculate_metro_fare":             "🔄 Calculating metro fare...",
+    "get_metro_fare":                   "🔄 Looking up metro fare...",
+    "get_available_seats":              "🔄 Finding available seats...",
+    "make_booking":                     "🔄 Confirming your booking...",
+    "cancel_booking":                   "🔄 Processing cancellation...",
+    "get_user_bookings":                "🔄 Loading your bookings...",
+    "search_policy":                    "🔄 Searching policy documents...",
+    "find_route":                       "🔄 Finding the best route...",
+    "find_alternative_routes":          "🔄 Searching alternative routes...",
+    "get_delay_ripple":                 "🔄 Analysing delay impact...",
 }
 
 
@@ -71,7 +71,7 @@ def chat(user_message: str, history_display: list, agent_history: list,
     yield (
         history_display + [
             {"role": "user",      "content": user_message},
-            {"role": "assistant", "content": "🔄 正在分析您的問題..."},
+            {"role": "assistant", "content": "🔄 Analysing your question..."},
         ],
         agent_history,
         gr.update(visible=False),
@@ -109,7 +109,7 @@ def chat(user_message: str, history_display: list, agent_history: list,
         tool_name = progress_q.get()
         if tool_name is None:
             break
-        status_text = _TOOL_STATUS.get(tool_name, f"🔄 正在執行 {tool_name}...")
+        status_text = _TOOL_STATUS.get(tool_name, f"🔄 Running {tool_name}...")
         yield (
             history_display + [
                 {"role": "user",      "content": user_message},
