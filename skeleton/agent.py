@@ -27,6 +27,8 @@ Your goal is to make the database queries richer by:
 The agent will automatically use whatever you put in the databases.
 """
 
+# TASK 6 EXTENSION (Stage 3 robustness layer): DI wiring + @error_handler + metrics/logging. See TASK6.md §B.
+
 from __future__ import annotations
 
 import functools

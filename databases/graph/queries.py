@@ -25,6 +25,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Optional
 
+# TASK 6 EXTENSION: shared Neo4j connection pool. See TASK6.md + DESIGN_DOC §7.
 from databases.graph.connection_pool import get_pool
 
 # Cross-track imports for query_cheapest_route (docs/20). These functions live

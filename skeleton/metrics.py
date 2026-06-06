@@ -10,6 +10,7 @@ Import and use:
     query_counter.labels(tool="find_route", status="success").inc()
     query_duration.labels(tool="find_route").observe(elapsed_seconds)
 """
+# TASK 6 EXTENSION (Stage 3 robustness layer): Prometheus query metrics. See TASK6.md §B.
 from __future__ import annotations
 
 from prometheus_client import Counter, Histogram

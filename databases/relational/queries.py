@@ -30,8 +30,9 @@ from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 
 from skeleton.config import PG_DSN, VECTOR_TOP_K, VECTOR_SIMILARITY_THRESHOLD
-# Stage 3.3 — low-volatility read caches. Only fares and metro schedules are
+# TASK 6 EXTENSION: low-volatility read caches. Only fares and metro schedules are
 # cached here; seat availability and bookings must NEVER be cached (oversell risk).
+# See TASK6.md + DESIGN_DOC §7.
 from skeleton.cache import fare_cache, schedule_cache
 
 _ph = PasswordHasher()
@@ -151,7 +152,7 @@ def query_national_rail_fare(
     FARE_MULTIPLIERS = {"standard": 1.0, "first": 1.5, "senior": 0.8, "student": 0.85}
     fare_multiplier = FARE_MULTIPLIERS.get(fare_class, 1.0)
 
-    # Cache by the full parameter set; a hit skips the DB round-trip entirely.
+    # TASK 6 EXTENSION: cache by the full parameter set; a hit skips the DB round-trip entirely.
     cache_key = f"fare:{schedule_id}:{fare_class}:{stops_travelled}"
     cached = fare_cache.get(cache_key)
     if cached is not None:
@@ -187,7 +188,7 @@ def query_national_rail_fare(
 
 def query_metro_schedules(origin_id: str, destination_id: str) -> list[dict]:
     """Return metro schedules that serve both origin and destination in the correct order."""
-    # Schedules are stable within a day; cache by the (origin, destination) pair.
+    # TASK 6 EXTENSION: schedules are stable within a day; cache by the (origin, destination) pair.
     cache_key = f"metro_sched:{origin_id}:{destination_id}"
     cached = schedule_cache.get(cache_key)
     if cached is not None:

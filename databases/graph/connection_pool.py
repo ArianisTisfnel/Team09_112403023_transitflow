@@ -12,6 +12,8 @@ Usage (drop-in for the old `with _driver() as driver:` pattern):
             result = session.run(...)
 """
 
+# TASK 6 EXTENSION: Neo4j connection pool (driver singleton). See TASK6.md + DESIGN_DOC §7.
+
 from __future__ import annotations
 
 import logging

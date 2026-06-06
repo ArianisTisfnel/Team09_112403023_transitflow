@@ -6,6 +6,8 @@ policy_cache at system startup to reduce cold-start latency for
 policy Q&A queries.
 """
 
+# TASK 6 EXTENSION: startup warmup of policy_cache. See TASK6.md + DESIGN_DOC §7.
+
 from __future__ import annotations
 
 import logging

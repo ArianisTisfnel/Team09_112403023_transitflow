@@ -5,6 +5,7 @@ Usage:
     from skeleton.health_check import healthz
     print(healthz())
 """
+# TASK 6 EXTENSION (Stage 3 robustness layer): database health probe. See TASK6.md §B.
 from __future__ import annotations
 
 import json
