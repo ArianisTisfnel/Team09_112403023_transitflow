@@ -107,8 +107,10 @@ pytest                      # 全部
 
 ## 疑難排解
 
-- **Gradio 無法啟動** —— `ui.py` 是針對 Gradio **4.x** API 寫的；`requirements.txt`
-  已釘 `gradio<5`。若先前裝到較新版本，請重跑 `pip install -r requirements.txt`。
+- **安裝出現 websockets 依賴衝突** —— 請在**乾淨的虛擬環境**安裝。`requirements.txt`
+  使用 **Gradio 6**：Gradio 4.x 會與 `google-genai`（`skeleton/llm_provider.py` 一律
+  import 的套件）在 `websockets` 版本上衝突，故必須用 Gradio 6。`ui.py` 將 `theme`
+  傳給 `.launch()`（Gradio 6 的寫法）。
 - **`embedding dimension mismatch`** —— seed 之後換了嵌入模型。請固定單一
   `LLM_PROVIDER`；`schema.sql` 對 Ollama 用 `vector(768)`（Gemini 用 `vector(3072)`），
   然後重建 volume 並重新 seed。
