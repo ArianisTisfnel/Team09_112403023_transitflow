@@ -61,7 +61,7 @@ MATCH (destination:Station {station_id: $destination_id})
 CALL apoc.algo.dijkstra(
     origin,
     destination,
-    'CONNECTS_TO|INTERCHANGE',
+    'METRO_LINK|RAIL_LINK|INTERCHANGE_TO',
     'travel_time_min'
 ) YIELD path, weight
 RETURN
@@ -95,8 +95,8 @@ def query_shortest_route(
 ) -> dict:
     """
     Find the fastest path between two stations, minimising total travel time.
-    Uses apoc.algo.dijkstra over CONNECTS_TO and INTERCHANGE edges with
-    travel_time_min as the weight (APOC plugin enabled in docker-compose.yml).
+    Uses apoc.algo.dijkstra over METRO_LINK / RAIL_LINK / INTERCHANGE_TO edges
+    with travel_time_min as the weight (APOC plugin enabled in docker-compose.yml).
 
     Args:
         origin_id:       e.g. "MS01" or "NR01"
@@ -172,7 +172,7 @@ MATCH (origin:Station {station_id: $origin_id})
 MATCH (destination:Station {station_id: $destination_id})
 CALL apoc.algo.allSimplePaths(
     origin, destination,
-    'CONNECTS_TO|INTERCHANGE',
+    'METRO_LINK|RAIL_LINK|INTERCHANGE_TO',
     $max_hops
 ) YIELD path
 WHERE length(path) > 0
@@ -201,8 +201,8 @@ def _segment_fare_usd(from_id: str, to_id: str, fare_class: str) -> float:
             schedules = query_metro_schedules(from_id, to_id)
             if schedules:
                 fare = query_metro_fare(schedules[0]["schedule_id"], 1)
-                if fare and "fare_usd" in fare:
-                    return float(fare["fare_usd"])
+                if fare and "total_fare_usd" in fare:
+                    return float(fare["total_fare_usd"])
             return _DEFAULT_METRO_SEGMENT_FARE_USD
 
         # National rail segment, or cross-network (MS↔NR via INTERCHANGE)
@@ -334,7 +334,7 @@ MATCH (origin:Station {station_id: $origin_id})
 MATCH (destination:Station {station_id: $destination_id})
 CALL apoc.algo.allSimplePaths(
     origin, destination,
-    'CONNECTS_TO|INTERCHANGE',
+    'METRO_LINK|RAIL_LINK|INTERCHANGE_TO',
     5
 ) YIELD path
 WHERE length(path) > 0
@@ -428,11 +428,11 @@ MATCH (origin:Station {station_id: $origin_id})
 MATCH (destination:Station {station_id: $destination_id})
 CALL apoc.algo.allSimplePaths(
     origin, destination,
-    'CONNECTS_TO|INTERCHANGE',
+    'METRO_LINK|RAIL_LINK|INTERCHANGE_TO',
     10
 ) YIELD path
 WHERE length(path) > 0
-  AND any(rel IN relationships(path) WHERE type(rel) = 'INTERCHANGE')
+  AND any(rel IN relationships(path) WHERE type(rel) = 'INTERCHANGE_TO')
 RETURN
     [n IN nodes(path) | n.station_id] AS station_ids,
     [n IN nodes(path) | {
@@ -532,7 +532,7 @@ def query_interchange_path(origin_id: str, destination_id: str) -> dict:
                     }
                     legs.append(leg)
 
-                    if leg["relationship_type"] == "INTERCHANGE":
+                    if leg["relationship_type"] == "INTERCHANGE_TO":
                         interchange_points.append({
                             "from_station_id": leg["from_station_id"],
                             "from_station_name": leg["from_station_name"],
@@ -585,7 +585,7 @@ def validate_interchange_feasibility(path_details: dict) -> bool:
     Supports two payload layouts:
 
       Layout A — path_details["legs"]: a list of leg dicts. INTERCHANGE legs
-          have relationship_type == "INTERCHANGE" and travel_time_min must be
+          have relationship_type == "INTERCHANGE_TO" and travel_time_min must be
           >= 15.
 
       Layout B — path_details["interchange_points"]: a list of transfer-point
@@ -607,7 +607,7 @@ def validate_interchange_feasibility(path_details: dict) -> bool:
     """
     # Layout A: legs
     for leg in path_details.get("legs", []) or []:
-        if leg.get("relationship_type") != "INTERCHANGE":
+        if leg.get("relationship_type") != "INTERCHANGE_TO":
             continue
         if (leg.get("travel_time_min") or 0) < _MIN_INTERCHANGE_MIN:
             return False
@@ -816,7 +816,7 @@ ORDER BY n.station_id ASC
 def query_station_connections(station_id: str) -> list[dict]:
     """
     List all outgoing direct connections from a given station, including both
-    CONNECTS_TO (same-network rail/metro segments) and INTERCHANGE
+    same-network links (METRO_LINK / RAIL_LINK segments) and INTERCHANGE_TO
     (cross-network walking transfers).
 
     Args:
@@ -826,8 +826,8 @@ def query_station_connections(station_id: str) -> list[dict]:
         list of dicts each containing:
           from_station_id, from_station_name, from_network,
           to_station_id, to_station_name, to_network,
-          relationship_type ("CONNECTS_TO" or "INTERCHANGE"),
-          travel_time_min, line (None for INTERCHANGE).
+          relationship_type ("METRO_LINK" / "RAIL_LINK" or "INTERCHANGE_TO"),
+          travel_time_min, line (None for INTERCHANGE_TO).
         Returns [] when the station has no outgoing edges or does not exist.
     """
     try:

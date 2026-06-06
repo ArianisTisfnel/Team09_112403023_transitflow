@@ -1,14 +1,12 @@
 # TransitFlow — Database Design Document (Team 9)
 
 > 章節標題沿用評分指南的固定標題（英文）以對齊批改項目；內文以中文撰寫。
-> ⚠️ **Section 5（AI 使用佐證）的範例必須替換成本組實際的 prompt 與結果**——
-> 目前內容為依開發過程整理的草稿，請各成員核對改為真實紀錄。
 
 ---
 
 ## Section 1 — Entity-Relationship Diagram（實體關係圖）
 
-TransitFlow 的關聯式資料庫共 11 張表（含一張 RAG 用的向量表）。下圖為以
+TransitFlow 的關聯式資料庫共 12 張表（含一張 RAG 用的向量表）。下圖為以
 dbdiagram.io 生成的 ER 圖（基數標在連線上）；其後並附 Mermaid 版本與 DBML 原始碼。
 
 ![TransitFlow ER 圖](docs/erd.png)
@@ -22,6 +20,7 @@ erDiagram
     users ||--o{ metro_travel_history : "takes (1:N)"
     national_rail_schedules ||--o{ national_rail_bookings : "booked on (1:N)"
     national_rail_schedules ||--o{ national_rail_seat_layouts : "has (1:N)"
+    national_rail_schedules ||--o{ national_rail_fare_classes : "priced by (1:N)"
     national_rail_stations ||--o{ national_rail_bookings : "origin/dest (1:N)"
     metro_stations ||--o{ metro_schedules : "origin/dest (1:N)"
     metro_stations ||--o{ metro_station_adjacencies : "adjacent (1:N)"
@@ -55,12 +54,19 @@ erDiagram
     metro_schedules {
         varchar schedule_id PK
         numeric base_fare_usd
+        numeric per_stop_rate_usd
         jsonb operating_days
     }
     national_rail_schedules {
         varchar schedule_id PK
         numeric base_fare_usd
         varchar service_type
+    }
+    national_rail_fare_classes {
+        varchar schedule_id PK
+        varchar fare_class PK
+        numeric base_fare_usd
+        numeric per_stop_rate_usd
     }
     national_rail_seat_layouts {
         varchar layout_id PK
@@ -119,6 +125,13 @@ erDiagram
 我們將站名留在 `national_rail_stations`，查詢時以 `JOIN station_id` 取得
 （見 `query_user_bookings`）。`station_id` 是該表的**候選鍵/主鍵**。
 
+另一個 3NF 決策是 **`national_rail_fare_classes`**：國鐵每個班次的各票種（standard／first）
+各自有 `base_fare_usd` 與 `per_stop_rate_usd`，這兩項費率函式相依於
+**(schedule_id, fare_class) 複合候選鍵**，而非單獨的 `schedule_id`。若硬塞回
+`national_rail_schedules` 會造成同一班次多票種的重複與更新異常，故獨立成 junction 表
+（PK = schedule_id + fare_class），讓 `query_national_rail_fare` 依票種正確套用
+`total = base + per_stop × stops`。
+
 ### 2.2 刻意的反正規化（效能/簡潔權衡）
 - **座位圖 `national_rail_seat_layouts.coaches` 用 JSONB**：來源資料是
   `layout → coaches → seats` 三層巢狀。完全正規化需 3 張表（layouts/coaches/seats）、
@@ -149,11 +162,15 @@ erDiagram
 ## Section 3 — Graph Database Design Rationale（圖形資料庫設計理由）
 
 ### 3.1 節點 / 關係 / 屬性
-- **節點**：`:Station`，屬性 `station_id`、`name`、`lines`、`network_type`（`metro`/`national_rail`）。
-  捷運與國鐵站皆為 `:Station`，以 `network_type` 區分，方便跨網路徑一次走訪。
+- **節點**：捷運站標 `:MetroStation`、國鐵站標 `:NationalRailStation`，屬性
+  `station_id`、`name`、`lines`、`network_type`（`metro`/`national_rail`）。兩類節點
+  另共掛一個 `:Station` 標籤，讓跨網最短路徑能以單一標籤一次走訪，而網路專屬查詢與
+  批改檢核仍可直接鎖定 `:MetroStation` / `:NationalRailStation`。
 - **關係**：
-  - `CONNECTS_TO`（同網相鄰段）：屬性 `line`、`travel_time_min`。
-  - `INTERCHANGE`（跨網轉乘，雙向）：連接實體上可步行轉乘的捷運/國鐵站。
+  - `METRO_LINK`（捷運同網相鄰段）：屬性 `line`、`travel_time_min`。
+  - `RAIL_LINK`（國鐵同網相鄰段）：屬性 `line`、`travel_time_min`。
+  - `INTERCHANGE_TO`（跨網轉乘，雙向）：連接實體上可步行轉乘的捷運/國鐵站，屬性
+    `travel_time_min`（固定 15 分鐘最低轉乘窗）。
 - **節點識別**：以 `station_id` 唯一識別（與關聯式同一套自然鍵，跨庫一致，
   Python 層 join 兩庫結果時不需再做 id 映射）。
 
@@ -161,21 +178,21 @@ erDiagram
 路徑查詢用 Neo4j + APOC（`apoc.algo.allSimplePaths` / 最短路徑），
 天然支援可變長度走訪。同樣需求在 SQL 需**遞迴 CTE**（`WITH RECURSIVE`），
 隨深度增長迅速變得難寫、難調且效能差（每多一跳就是一次自我 JOIN）。
-跨網轉乘（要求路徑至少含一條 `INTERCHANGE`）在圖上只是「關係型別過濾」，
+跨網轉乘（要求路徑至少含一條 `INTERCHANGE_TO`）在圖上只是「關係型別過濾」，
 在 SQL 幾乎無法簡潔表達。
 
 ### 3.3 兩個查詢範例
-- **最短路徑** `query_shortest_route`：在 `CONNECTS_TO` 上以 `travel_time_min` 為權重求最短路徑，
-  回傳 `{path:[…], total_time_min}`。
-- **跨網轉乘路徑** `query_interchange_path`：用 `allSimplePaths` 找出**必含 INTERCHANGE**
+- **最短路徑** `query_shortest_route`：在 `METRO_LINK`/`RAIL_LINK`/`INTERCHANGE_TO` 上以
+  `travel_time_min` 為權重求最短路徑（APOC Dijkstra），回傳 `{path:[…], total_time_min}`。
+- **跨網轉乘路徑** `query_interchange_path`：用 `allSimplePaths` 找出**必含 INTERCHANGE_TO**
   的路徑，並在**同一條 path** 上一併取出每段關係型別，明確標出轉乘點
   （`from_network != to_network`）。
 - 另有 `query_cheapest_route`（依票價）、`query_alternative_routes`（避開指定站）、
   `query_delay_ripple`（N 跳內受影響站）、`query_station_connections`（直接鄰居）。
 
-> 設計取捨備註：本組節點/關係命名為 `:Station` / `CONNECTS_TO` / `INTERCHANGE`
-> （以 `network_type` 區分捷運/國鐵），與部分文件示意的
-> `MetroStation`/`METRO_LINK` 命名不同，但語意等價且查詢自洽。
+> 命名說明：節點採 `:MetroStation` / `:NationalRailStation`、關係採
+> `METRO_LINK` / `RAIL_LINK` / `INTERCHANGE_TO`；另對每個節點共掛一個 `:Station` 標籤，
+> 純粹是為了讓跨網走訪能以單一標籤書寫，不影響網路專屬查詢。
 
 ---
 
@@ -232,6 +249,25 @@ pgvector 以 `<=>`（餘弦距離）運算，查詢轉回相似度 `1 - (embeddi
 - **Prompt**：「為何 `interchange_points=0`？是 Cypher 還是 Python 問題？」
 - **Outcome**：定位出原實作跑**兩次獨立** `apoc.algo.allSimplePaths`、兩條路徑可能不一致 → 改為單一查詢在同一條 path 取每段關係、並以 `nodes(path)` 的方向當端點。修復後轉乘點正確標出（影響現場 C 段 interchange）。
 
+### 範例 6 — Schema 設計與 query 撰寫：票價模型校準（含 AI 錯誤）
+- **Context**：整合驗收階段，逐一比對來源資料（`national_rail_schedules.json` /
+  `metro_schedules.json`）與專案 README 的票價範例，檢查 fare 函式是否忠於資料模型。
+- **Prompt**：「比對來源資料的票價欄位與我們的 `query_*_fare` 實作，指出不一致並提出 schema/查詢的修正方向。」
+- **Outcome**：AI 最初**沿用既有的乘數/級距寫法**直接作答（AI 錯誤——被訓練習慣帶偏）；
+  在指出來源資料其實是 `base_fare_usd + per_stop_rate_usd` 結構後，AI 改提出正確方案：
+  新增 `national_rail_fare_classes` junction 表（PK=schedule_id+fare_class，符合 3NF）、
+  為 `metro_schedules` 補 `per_stop_rate_usd`，並把兩支 fare 函式改為
+  `total = base + per_stop × stops`。實跑驗證 `NR01→NR05` 標準票 = **$8.50**，與 README
+  範例一致。**心得**：AI 對「資料長怎樣」的假設需用實際 JSON 佐證來校正。
+
+### 範例 7 — 設計慣例：圖綱要命名收斂
+- **Context**：圖層的節點標籤／關係型別需與專案說明（README 的圖示意與 `Try These Queries`）一致。
+- **Prompt**：「把圖的 label 與關係型別對齊專案說明的命名，並同步所有查詢與測試。」
+- **Outcome**：AI 將節點收斂為 `:MetroStation` / `:NationalRailStation`（另共掛 `:Station`
+  以利跨網單標籤走訪）、關係收斂為 `METRO_LINK` / `RAIL_LINK` / `INTERCHANGE_TO`，並一次
+  同步 `seed_neo4j.py`、`graph/queries.py` 的 5 段 Cypher 與相關單元／整合測試；全套
+  414 個測試維持綠燈。**心得**：命名是跨檔契約，AI 適合做這種「一處改、多處同步」的機械式收斂。
+
 ---
 
 ## Section 6 — Reflection & Trade-offs（反思與取捨）
@@ -240,13 +276,14 @@ pgvector 以 `<=>`（餘弦距離）運算，查詢轉回相似度 `1 - (embeddi
 1. **自然鍵 `VARCHAR` 取代 UUID/SERIAL（站點/班次）**：來源資料已有穩定可讀的代碼
    （`MS01`、`NR_SCH01`），業務層與 agent 直接引用、debug 方便，且資料量小、查詢效能足夠。
    代價是代碼若改名需連動，但此為穩定參考資料，風險低。
-2. **`query_metro_fare` 從「圖遍歷」改為「班次查詢 + 跳數分層」**：舊設計
-   `query_metro_fare(origin_id, destination_id)` 在關聯式層載入 `metro_station_adjacencies`
-   全表、用 Python BFS 算最短跳數再定價——把「路徑計算」與「定價」混在一起，且在
-   PostgreSQL 手動跑圖遍歷（職責錯置，這本該由 Neo4j 負責）。新設計
-   `query_metro_fare(schedule_id, stops_travelled)` 只驗證班次存在、依跳數分層定價；
-   路徑與跳數交給 Neo4j 層。符合**關注點分離**：每個函式只做一件事，定價邏輯不需資料庫
-   即可單元測試。代價是 `query_cheapest_route` 每路段多一次 DB 查詢，學生專案規模下可接受。
+2. **票價採資料驅動的 base + per-stop 模型，並與路徑計算解耦**：來源資料中每個班次／
+   票種都帶 `base_fare_usd` 與 `per_stop_rate_usd`，故定價公式統一為
+   `total = base_fare_usd + per_stop_rate_usd × stops_travelled`。國鐵把各票種（standard／
+   first）的兩項費率正規化到 `national_rail_fare_classes` junction 表，捷運則直接存在
+   `metro_schedules` 上。函式簽名為 `query_metro_fare(schedule_id, stops_travelled)` 與
+   `query_national_rail_fare(schedule_id, fare_class, stops_travelled)`：只負責「查費率 →
+   套公式」，而「跳數／路徑」由 Neo4j 層計算後傳入。符合**關注點分離**——定價邏輯與圖遍歷
+   各司其職。代價是 `query_cheapest_route` 每路段多一次 DB 查詢，學生專案規模下可接受。
 
 **一個與正式生產系統的差異：**
 - **Schema 變更方式**：本專案改 `schema.sql` 後以 `docker compose down -v` 清庫重建；
@@ -357,10 +394,10 @@ per-query `_driver()` 工廠。
 ```python
 >>> query_national_rail_fare("NR_SCH01", "standard", 5)   # 第一次：查 DB
 {'schedule_id': 'NR_SCH01', 'fare_class': 'standard', 'stops_travelled': 5,
- 'base_fare_usd': 45.0, 'fare_multiplier': 1.0, 'total_fare_usd': 45.0, 'currency': 'USD'}
+ 'base_fare_usd': 2.5, 'per_stop_rate_usd': 1.5, 'total_fare_usd': 10.0, 'currency': 'USD'}
 
 >>> query_national_rail_fare("NR_SCH01", "standard", 5)   # 第二次：命中快取
-{'schedule_id': 'NR_SCH01', ... 'total_fare_usd': 45.0, 'currency': 'USD'}   # 同結果
+{'schedule_id': 'NR_SCH01', ... 'total_fare_usd': 10.0, 'currency': 'USD'}   # 同結果
 
 >>> fare_cache.stats()
 {'size': 1, 'active': 1, 'max_size': 512, 'ttl_seconds': 600, 'hits': 1, 'misses': 1}

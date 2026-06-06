@@ -25,15 +25,15 @@ def query_national_rail_fare(
 ) -> Optional[dict]:
 ```
 
-**票價乘數對照表**：
+**票價模型**：`total_fare_usd = base_fare_usd + per_stop_rate_usd × stops_travelled`。
+每個班次的各票種費率存於 `national_rail_fare_classes`（PK = schedule_id + fare_class）。
+來源資料目前提供 `standard` 與 `first` 兩種票種：
 
-| fare_class | 乘數 |
-|---|---|
-| `"standard"` | `1.0` |
-| `"first"` | `1.5` |
-| `"senior"` | `0.8` |
-| `"student"` | `0.85` |
-| （其他值） | `1.0`（預設） |
+| fare_class | base_fare_usd | per_stop_rate_usd |
+|---|---|---|
+| `"standard"` | 2.50 | 1.50 |
+| `"first"` | 4.00 | 2.50 |
+| （其他值） | 退回該班次的 `standard` 票種 | 同左 |
 
 **回傳格式**：
 
@@ -42,9 +42,9 @@ def query_national_rail_fare(
   "schedule_id": "NR_SCH01",
   "fare_class": "standard",
   "stops_travelled": 4,
-  "base_fare_usd": 12.50,
-  "fare_multiplier": 1.0,
-  "total_fare_usd": 12.50,
+  "base_fare_usd": 2.50,
+  "per_stop_rate_usd": 1.50,
+  "total_fare_usd": 8.50,
   "currency": "USD"
 }
 ```
@@ -102,30 +102,28 @@ def query_metro_schedules(
    # if cached is not None:
    #     return cached  -- 快取命中，直接回傳
 
-3. 定義乘數字典：
-   FARE_MULTIPLIERS = {"standard": 1.0, "first": 1.5, "senior": 0.8, "student": 0.85}
-   fare_multiplier = FARE_MULTIPLIERS.get(fare_class, 1.0)  -- 無效值預設 1.0
+3. 連線 PostgreSQL，依票種查費率：
+   SELECT base_fare_usd, per_stop_rate_usd
+   FROM national_rail_fare_classes
+   WHERE schedule_id = %s AND fare_class = %s
+   參數：(schedule_id, fare_class)
 
-4. 連線 PostgreSQL，查詢：
-   SELECT base_fare_usd
-   FROM national_rail_schedules
-   WHERE schedule_id = %s
-   參數：(schedule_id,)
+4. fetchone()：
+   - 若 None → 退回同班次的 'standard' 票種再查一次
+   - 仍為 None → 回傳 None（該班次無票價資料，不寫快取）
 
-5. fetchone()：
-   - 若 None → 回傳 None（不寫快取）
+5. 計算票價：
+   base_fare_usd     = float(result['base_fare_usd'])
+   per_stop_rate_usd = float(result['per_stop_rate_usd'])
+   total_fare_usd    = round(base_fare_usd + per_stop_rate_usd * max(int(stops_travelled), 0), 2)
 
-6. 計算票價：
-   base_fare_usd = float(result['base_fare_usd'])
-   total_fare_usd = round(base_fare_usd * fare_multiplier, 2)
-
-7. 組裝回傳 dict，寫入快取（Stage 3.3 補入，此階段略過）：
+6. 組裝回傳 dict，寫入快取（Stage 3.3 補入，此階段略過）：
    fare_result = {
        "schedule_id": schedule_id,
        "fare_class": fare_class,
        "stops_travelled": stops_travelled,
        "base_fare_usd": base_fare_usd,
-       "fare_multiplier": fare_multiplier,
+       "per_stop_rate_usd": per_stop_rate_usd,
        "total_fare_usd": total_fare_usd,
        "currency": "USD",
    }
@@ -136,10 +134,9 @@ def query_metro_schedules(
 **為什麼快取只寫在「找到結果」的情況下？**
 None 結果表示該班次不存在，資料庫可能稍後補齊，不應永久快取。
 
-**為什麼 `stops_travelled` 包含在回傳 dict 但不用於票價計算？**
-`national_rail_schedules` 只有 `base_fare_usd`（整段路線票價），
-`stops_travelled` 由呼叫方傳入並原樣回傳，供 agent 組裝回答時使用。
-快取鍵包含 `stops_travelled` 確保不同跳數的查詢結果彼此獨立。
+**`stops_travelled` 如何影響票價？**
+總價為 `base + per_stop × stops`，故 `stops_travelled` 直接參與計算（非數值輸入會
+保守地當作 0，只計 base）。快取鍵包含 `stops_travelled`，確保不同跳數的結果彼此獨立。
 
 ### query_metro_schedules 邏輯步驟
 
@@ -182,11 +179,11 @@ PostgreSQL 的 `TIME` 欄位在 Python 中預設被 psycopg2 轉為 `datetime.ti
 **測試驗證的關鍵行為**：
 
 `query_national_rail_fare`：
-1. 標準票（fare_class="standard"）回傳 `total_fare_usd = base_fare_usd * 1.0`
-2. 頭等票（fare_class="first"）回傳 `total_fare_usd = base_fare_usd * 1.5`
+1. 標準票（fare_class="standard"）回傳 `total_fare_usd = base_fare_usd + per_stop_rate_usd × stops_travelled`
+2. 頭等票（fare_class="first"）的 `per_stop_rate_usd` 與 standard 不同，總價依其費率重新計算
 3. `schedule_id` 不存在時回傳 `None`
-4. 無效 fare_class 時使用 1.0 乘數
-5. 回傳 dict 包含 `schedule_id`、`stops_travelled`、`base_fare_usd`、`total_fare_usd`、`currency` 欄位
+4. 無效 fare_class 時退回該班次的 standard 票種費率
+5. 回傳 dict 包含 `schedule_id`、`fare_class`、`stops_travelled`、`base_fare_usd`、`per_stop_rate_usd`、`total_fare_usd`、`currency` 欄位
 6. ⏩ **（Stage 3.3 補入，此處暫不驗）** 第二次呼叫相同參數時從快取取得——此行為由 `25-stage3.3-performance-boost.md` 的 `performance_boost` 測試覆蓋，Stage 1/2 的 `-k "national_rail_fare"` 測試**不驗證**快取命中
 
 `query_metro_schedules`：

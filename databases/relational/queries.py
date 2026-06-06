@@ -148,10 +148,13 @@ def query_national_rail_fare(
     fare_class: str,
     stops_travelled: int,
 ) -> Optional[dict]:
-    """Calculate the fare for a national rail journey."""
-    FARE_MULTIPLIERS = {"standard": 1.0, "first": 1.5, "senior": 0.8, "student": 0.85}
-    fare_multiplier = FARE_MULTIPLIERS.get(fare_class, 1.0)
-
+    """
+    Calculate the fare for a national rail journey as
+        total = base_fare_usd + per_stop_rate_usd * stops_travelled
+    using the per-class rates in national_rail_fare_classes. Unknown classes fall
+    back to this schedule's 'standard' class so the agent never crashes on an
+    unexpected class name. Returns None when the schedule has no fare data.
+    """
     # TASK 6 EXTENSION: cache by the full parameter set; a hit skips the DB round-trip entirely.
     cache_key = f"fare:{schedule_id}:{fare_class}:{stops_travelled}"
     cached = fare_cache.get(cache_key)
@@ -161,22 +164,37 @@ def query_national_rail_fare(
     with _connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
-                "SELECT base_fare_usd FROM national_rail_schedules WHERE schedule_id = %s",
-                (schedule_id,)
+                "SELECT base_fare_usd, per_stop_rate_usd FROM national_rail_fare_classes "
+                "WHERE schedule_id = %s AND fare_class = %s",
+                (schedule_id, fare_class)
             )
             row = cur.fetchone()
+            if row is None:
+                # Unknown class for this schedule → fall back to standard.
+                cur.execute(
+                    "SELECT base_fare_usd, per_stop_rate_usd FROM national_rail_fare_classes "
+                    "WHERE schedule_id = %s AND fare_class = 'standard'",
+                    (schedule_id,)
+                )
+                row = cur.fetchone()
             if row is None:
                 return None  # never cache a miss — the schedule may appear later
 
             base_fare_usd = float(row["base_fare_usd"])
-            total_fare_usd = round(base_fare_usd * fare_multiplier, 2)
+            per_stop_rate_usd = float(row["per_stop_rate_usd"])
+
+    try:
+        stops = max(int(stops_travelled), 0)
+    except (TypeError, ValueError):
+        stops = 0  # non-numeric input → price the base fare only
+    total_fare_usd = round(base_fare_usd + per_stop_rate_usd * stops, 2)
 
     fare_result = {
         "schedule_id": schedule_id,
         "fare_class": fare_class,
         "stops_travelled": stops_travelled,
         "base_fare_usd": base_fare_usd,
-        "fare_multiplier": fare_multiplier,
+        "per_stop_rate_usd": per_stop_rate_usd,
         "total_fare_usd": total_fare_usd,
         "currency": "USD",
     }
@@ -214,31 +232,36 @@ def query_metro_schedules(origin_id: str, destination_id: str) -> list[dict]:
 
 
 def query_metro_fare(schedule_id: str, stops_travelled: int) -> Optional[dict]:
-    """Calculate the metro fare for a single-ticket journey."""
+    """
+    Calculate the metro fare for a single-ticket journey as
+        total = base_fare_usd + per_stop_rate_usd * stops_travelled
+    using the rates stored on metro_schedules. Returns None for an unknown
+    schedule_id.
+    """
     with _connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
-                "SELECT schedule_id FROM metro_schedules WHERE schedule_id = %s",
+                "SELECT base_fare_usd, per_stop_rate_usd FROM metro_schedules WHERE schedule_id = %s",
                 (schedule_id,)
             )
-            if cur.fetchone() is None:
+            row = cur.fetchone()
+            if row is None:
                 return None
+            base_fare_usd = float(row["base_fare_usd"])
+            per_stop_rate_usd = float(row["per_stop_rate_usd"])
 
-    if stops_travelled <= 2:
-        fare_tier = "1-2 stops"
-        fare_usd = 1.50
-    elif stops_travelled <= 5:
-        fare_tier = "3-5 stops"
-        fare_usd = 2.50
-    else:
-        fare_tier = "6+ stops"
-        fare_usd = 4.00
+    try:
+        stops = max(int(stops_travelled), 0)
+    except (TypeError, ValueError):
+        stops = 0  # non-numeric input → price the base fare only
+    total_fare_usd = round(base_fare_usd + per_stop_rate_usd * stops, 2)
 
     return {
         "schedule_id": schedule_id,
         "stops_travelled": stops_travelled,
-        "fare_tier": fare_tier,
-        "fare_usd": fare_usd,
+        "base_fare_usd": base_fare_usd,
+        "per_stop_rate_usd": per_stop_rate_usd,
+        "total_fare_usd": total_fare_usd,
     }
 
 

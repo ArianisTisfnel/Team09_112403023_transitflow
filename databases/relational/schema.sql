@@ -25,6 +25,7 @@ DROP TABLE IF EXISTS payments CASCADE;
 DROP TABLE IF EXISTS metro_travel_history CASCADE;
 DROP TABLE IF EXISTS national_rail_bookings CASCADE;
 DROP TABLE IF EXISTS national_rail_seat_layouts CASCADE;
+DROP TABLE IF EXISTS national_rail_fare_classes CASCADE;
 DROP TABLE IF EXISTS national_rail_schedules CASCADE;
 DROP TABLE IF EXISTS metro_schedules CASCADE;
 DROP TABLE IF EXISTS metro_station_adjacencies CASCADE;
@@ -133,9 +134,14 @@ CREATE TABLE IF NOT EXISTS metro_schedules (
     first_train_time       TIME        NOT NULL,
     last_train_time        TIME        NOT NULL,
     base_fare_usd          NUMERIC(8,2) NOT NULL,
+    -- Distance component of the fare: total = base_fare_usd + per_stop_rate_usd * stops.
+    -- Sourced from metro_schedules.json; required so query_metro_fare reflects the
+    -- data's per-stop pricing rather than a hard-coded tier table.
+    per_stop_rate_usd      NUMERIC(8,2) NOT NULL DEFAULT 0,
     operating_days         JSONB       NOT NULL DEFAULT '["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]'::jsonb,
     created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT chk_base_fare_positive    CHECK (base_fare_usd > 0),
+    CONSTRAINT chk_metro_per_stop_nonneg CHECK (per_stop_rate_usd >= 0),
     CONSTRAINT chk_metro_time_logic      CHECK (first_train_time < last_train_time),
     CONSTRAINT chk_metro_stations_differ CHECK (origin_station_id <> destination_station_id),
     CONSTRAINT fk_metro_schedule_origin
@@ -173,6 +179,30 @@ CREATE TABLE IF NOT EXISTS national_rail_schedules (
         FOREIGN KEY (destination_station_id)
         REFERENCES national_rail_stations(national_rail_station_id)
         ON DELETE RESTRICT
+);
+
+-- ------------------------------------------------------------
+--  Table 6b: national_rail_fare_classes
+--  Per-class fare components for a national rail schedule. The source data nests
+--  fare_classes ({standard, first}) under each schedule, each with its own
+--  base_fare_usd and per_stop_rate_usd. Modelling this as a junction table
+--  (PK = schedule_id + fare_class) keeps it in 3NF — base/per-stop depend on the
+--  (schedule, class) pair, not on the schedule alone — and lets query_national_rail_fare
+--  compute total = base_fare_usd + per_stop_rate_usd * stops per class.
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS national_rail_fare_classes (
+    schedule_id       VARCHAR(30)  NOT NULL,
+    fare_class        VARCHAR(20)  NOT NULL,
+    base_fare_usd     NUMERIC(8,2) NOT NULL,
+    per_stop_rate_usd NUMERIC(8,2) NOT NULL,
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (schedule_id, fare_class),
+    CONSTRAINT chk_fare_class_base_positive    CHECK (base_fare_usd > 0),
+    CONSTRAINT chk_fare_class_per_stop_nonneg  CHECK (per_stop_rate_usd >= 0),
+    CONSTRAINT fk_fare_class_schedule
+        FOREIGN KEY (schedule_id)
+        REFERENCES national_rail_schedules(schedule_id)
+        ON DELETE CASCADE
 );
 
 -- ------------------------------------------------------------

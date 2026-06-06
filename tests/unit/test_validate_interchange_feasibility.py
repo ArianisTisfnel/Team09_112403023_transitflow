@@ -16,7 +16,7 @@ def _path_with_interchange_legs(*travel_times_min):
         legs.append({
             "from_station_id": f"MS0{i}",
             "to_station_id": f"MS0{i+1}",
-            "relationship_type": "INTERCHANGE",
+            "relationship_type": "INTERCHANGE_TO",
             "travel_time_min": t,
         })
     return {"legs": legs, "interchange_points": []}
@@ -63,10 +63,10 @@ def test_all_interchanges_sufficient_returns_true():
     """All interchange legs >= 15 min → True."""
     path = {
         "legs": [
-            {"relationship_type": "CONNECTS_TO", "travel_time_min": 10},
-            {"relationship_type": "INTERCHANGE",  "travel_time_min": 20},
-            {"relationship_type": "CONNECTS_TO",  "travel_time_min": 8},
-            {"relationship_type": "INTERCHANGE",  "travel_time_min": 15},
+            {"relationship_type": "METRO_LINK", "travel_time_min": 10},
+            {"relationship_type": "INTERCHANGE_TO",  "travel_time_min": 20},
+            {"relationship_type": "METRO_LINK",  "travel_time_min": 8},
+            {"relationship_type": "INTERCHANGE_TO",  "travel_time_min": 15},
         ],
         "interchange_points": [],
     }
@@ -78,9 +78,9 @@ def test_one_insufficient_interchange_returns_false():
     """One interchange leg below 15 min makes the whole path infeasible."""
     path = {
         "legs": [
-            {"relationship_type": "CONNECTS_TO", "travel_time_min": 5},
-            {"relationship_type": "INTERCHANGE",  "travel_time_min": 20},
-            {"relationship_type": "INTERCHANGE",  "travel_time_min": 10},  # ← too short
+            {"relationship_type": "METRO_LINK", "travel_time_min": 5},
+            {"relationship_type": "INTERCHANGE_TO",  "travel_time_min": 20},
+            {"relationship_type": "INTERCHANGE_TO",  "travel_time_min": 10},  # ← too short
         ],
         "interchange_points": [],
     }
@@ -94,8 +94,8 @@ def test_connects_to_legs_are_ignored():
     """CONNECTS_TO legs with any travel_time_min must not affect the result."""
     path = {
         "legs": [
-            {"relationship_type": "CONNECTS_TO", "travel_time_min": 2},
-            {"relationship_type": "CONNECTS_TO", "travel_time_min": 3},
+            {"relationship_type": "METRO_LINK", "travel_time_min": 2},
+            {"relationship_type": "METRO_LINK", "travel_time_min": 3},
         ],
         "interchange_points": [],
     }
@@ -115,8 +115,8 @@ def test_path_without_interchange_legs_returns_true():
     """Path with legs but no INTERCHANGE relationships is vacuously valid."""
     path = {
         "legs": [
-            {"relationship_type": "CONNECTS_TO", "travel_time_min": 5},
-            {"relationship_type": "CONNECTS_TO", "travel_time_min": 8},
+            {"relationship_type": "METRO_LINK", "travel_time_min": 5},
+            {"relationship_type": "METRO_LINK", "travel_time_min": 8},
         ],
         "interchange_points": [],
     }
@@ -189,9 +189,9 @@ def test_realistic_interchange_path_output_feasible():
             }
         ],
         "legs": [
-            {"relationship_type": "CONNECTS_TO", "travel_time_min": 5},
-            {"relationship_type": "INTERCHANGE",  "travel_time_min": 20},
-            {"relationship_type": "CONNECTS_TO",  "travel_time_min": 8},
+            {"relationship_type": "METRO_LINK", "travel_time_min": 5},
+            {"relationship_type": "INTERCHANGE_TO",  "travel_time_min": 20},
+            {"relationship_type": "METRO_LINK",  "travel_time_min": 8},
         ],
         "total_travel_time_min": 33,
     }
@@ -209,9 +209,9 @@ def test_realistic_interchange_path_output_infeasible():
         "stations": [],
         "interchange_points": [],
         "legs": [
-            {"relationship_type": "CONNECTS_TO", "travel_time_min": 5},
-            {"relationship_type": "INTERCHANGE",  "travel_time_min": 5},   # ← too short
-            {"relationship_type": "CONNECTS_TO",  "travel_time_min": 8},
+            {"relationship_type": "METRO_LINK", "travel_time_min": 5},
+            {"relationship_type": "INTERCHANGE_TO",  "travel_time_min": 5},   # ← too short
+            {"relationship_type": "METRO_LINK",  "travel_time_min": 8},
         ],
         "total_travel_time_min": 18,
     }

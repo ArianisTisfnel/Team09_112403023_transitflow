@@ -8,7 +8,7 @@
 ## 任務目標
 
 在 `databases/relational/queries.py` 中實作：
-- `query_metro_fare`：以 `schedule_id` 查詢班次確認存在，並根據 `stops_travelled` 套用票價分層回傳票價
+- `query_metro_fare`：以 `schedule_id` 查出班次的 `base_fare_usd` 與 `per_stop_rate_usd`，依 `stops_travelled` 套公式 `total = base + per_stop × stops` 回傳票價
 - `query_available_seats`：從 `national_rail_seat_layouts.coaches` JSONB 解析座位佈局，再交叉比對已訂座位
 - `auto_select_adjacent_seats`：從 `query_available_seats` 的輸出中選出 `count` 個盡量相鄰的座位
 
@@ -25,22 +25,19 @@ def query_metro_fare(
 ) -> Optional[dict]:
 ```
 
-**票價分層規則**：
-
-| stops_travelled | fare_tier | fare_usd |
-|---|---|---|
-| 1–2 站 | `"1-2 stops"` | `1.50` |
-| 3–5 站 | `"3-5 stops"` | `2.50` |
-| 6+ 站 | `"6+ stops"` | `4.00` |
+**票價模型**：`total_fare_usd = base_fare_usd + per_stop_rate_usd × stops_travelled`。
+`base_fare_usd` 與 `per_stop_rate_usd` 直接存在 `metro_schedules` 上（來源
+`metro_schedules.json`，例：`base 0.80`、`per_stop 0.30`）。
 
 **回傳格式（成功）**：
 
 ```json
 {
-  "schedule_id": "M1_SCH01",
-  "stops_travelled": 3,
-  "fare_tier": "3-5 stops",
-  "fare_usd": 2.50
+  "schedule_id": "MS_SCH01",
+  "stops_travelled": 4,
+  "base_fare_usd": 0.80,
+  "per_stop_rate_usd": 0.30,
+  "total_fare_usd": 2.00
 }
 ```
 
@@ -98,13 +95,13 @@ def auto_select_adjacent_seats(
 
 ### query_metro_fare 邏輯步驟
 
-本函式以 `schedule_id` 查詢班次是否存在，再根據 `stops_travelled` 套用票價分層，不做圖遍歷。
+本函式以 `schedule_id` 查出班次費率，再依 `stops_travelled` 套公式定價，不做圖遍歷。
 
 ```
 偽代碼：
 
-1. 連線 PostgreSQL，查詢班次是否存在：
-   SELECT schedule_id
+1. 連線 PostgreSQL，查班次費率：
+   SELECT base_fare_usd, per_stop_rate_usd
    FROM metro_schedules
    WHERE schedule_id = %s
    參數：(schedule_id,)
@@ -112,29 +109,25 @@ def auto_select_adjacent_seats(
 2. fetchone()：
    - 若 None → 回傳 None（班次不存在）
 
-3. 根據 stops_travelled 套用票價分層：
-   if stops_travelled <= 2:
-       fare_tier = "1-2 stops"
-       fare_usd  = 1.50
-   elif stops_travelled <= 5:
-       fare_tier = "3-5 stops"
-       fare_usd  = 2.50
-   else:
-       fare_tier = "6+ stops"
-       fare_usd  = 4.00
+3. 套用票價公式：
+   base_fare_usd     = float(row['base_fare_usd'])
+   per_stop_rate_usd = float(row['per_stop_rate_usd'])
+   total_fare_usd    = round(base_fare_usd + per_stop_rate_usd * max(int(stops_travelled), 0), 2)
 
 4. 組裝並回傳 dict：
    return {
        "schedule_id": schedule_id,
        "stops_travelled": stops_travelled,
-       "fare_tier": fare_tier,
-       "fare_usd": fare_usd,
+       "base_fare_usd": base_fare_usd,
+       "per_stop_rate_usd": per_stop_rate_usd,
+       "total_fare_usd": total_fare_usd,
    }
 ```
 
-**為什麼只查詢班次是否存在？**
-票價純粹依 `stops_travelled` 分層計算，不需要從資料庫讀取額外欄位。
-查詢 `metro_schedules` 的目的是確保 `schedule_id` 合法，避免傳入無效 ID 時回傳誤導性結果。
+**為什麼從班次讀費率？**
+票價依資料驅動：每個班次自帶 `base_fare_usd` 與 `per_stop_rate_usd`，
+故總價 = `base + per_stop × stops`，與來源 `metro_schedules.json` 一致，
+且能正確反映不同班次的票價差異（而非套用與資料無關的固定級距）。
 
 ### query_available_seats 邏輯步驟
 
@@ -233,12 +226,11 @@ def auto_select_adjacent_seats(available_seats, count):
 **驗收測試**：
 
 **query_metro_fare 測試驗證**：
-1. `stops_travelled=1` → `fare_usd=1.50`，`fare_tier="1-2 stops"`
-2. `stops_travelled=2` → `fare_usd=1.50`（邊界值）
-3. `stops_travelled=3` → `fare_usd=2.50`，`fare_tier="3-5 stops"`
-4. `stops_travelled=6` → `fare_usd=4.00`，`fare_tier="6+ stops"`
-5. 不存在的 `schedule_id` → 回傳 `None`
-6. 成功時回傳 dict 包含 `schedule_id`、`stops_travelled`、`fare_tier`、`fare_usd` 欄位
+1. `total_fare_usd == round(base_fare_usd + per_stop_rate_usd × stops_travelled, 2)`
+2. `stops_travelled=0` → 只計 base（`total == base_fare_usd`）
+3. 跳數越多總價不減（`per_stop_rate_usd >= 0`）
+4. 不存在的 `schedule_id` → 回傳 `None`
+5. 成功時回傳 dict 包含 `schedule_id`、`stops_travelled`、`base_fare_usd`、`per_stop_rate_usd`、`total_fare_usd` 欄位
 
 **query_available_seats 測試驗證**：
 1. 正確解析 coaches JSONB，只回傳匹配 fare_class 的座位

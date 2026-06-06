@@ -34,9 +34,9 @@ def test_query_interchange_path_found():
             "stations": mock_stations,
             "travel_times": [2, 1, 3],
             "legs": [
-                {"rel_type": "CONNECTS_TO", "travel_time": 2},   # MS03 -> MS04
-                {"rel_type": "INTERCHANGE", "travel_time": 1},   # MS04 -> NR05
-                {"rel_type": "CONNECTS_TO", "travel_time": 3},   # NR05 -> NR06
+                {"rel_type": "METRO_LINK", "travel_time": 2},      # MS03 -> MS04
+                {"rel_type": "INTERCHANGE_TO", "travel_time": 1},  # MS04 -> NR05
+                {"rel_type": "RAIL_LINK", "travel_time": 3},       # NR05 -> NR06
             ],
         }
         mock_result_1.single.return_value = mock_record_1

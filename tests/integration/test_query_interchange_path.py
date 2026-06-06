@@ -41,8 +41,8 @@ def _assert_valid_interchange_result(result, origin, destination):
         assert {ip["from_network"], ip["to_network"]} == {"metro", "national_rail"}
         assert (ip["from_station_id"], ip["to_station_id"]) in _INTERCHANGE_PAIRS
 
-    # every INTERCHANGE leg must be surfaced as an interchange point.
-    interchange_legs = [l for l in legs if l["relationship_type"] == "INTERCHANGE"]
+    # every INTERCHANGE_TO leg must be surfaced as an interchange point.
+    interchange_legs = [l for l in legs if l["relationship_type"] == "INTERCHANGE_TO"]
     assert len(interchange_legs) == len(interchanges)
 
 

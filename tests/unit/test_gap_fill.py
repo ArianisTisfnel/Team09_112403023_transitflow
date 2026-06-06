@@ -375,7 +375,7 @@ class TestQueryStationConnections:
                 "from_network": "metro",
                 "to_station_id": "MS02",   "to_station_name": "Riverside",
                 "to_network": "metro",
-                "relationship_type": "CONNECTS_TO",
+                "relationship_type": "METRO_LINK",
                 "travel_time_min": 3,       "line": "M1",
             },
             {
@@ -383,7 +383,7 @@ class TestQueryStationConnections:
                 "from_network": "metro",
                 "to_station_id": "NR01",   "to_station_name": "Central Station",
                 "to_network": "rail",
-                "relationship_type": "INTERCHANGE",
+                "relationship_type": "INTERCHANGE_TO",
                 "travel_time_min": None,    "line": None,
             },
         ]
@@ -405,8 +405,8 @@ class TestQueryStationConnections:
 
         assert len(result) == 2
         assert result[0]["to_station_id"] == "MS02"
-        assert result[0]["relationship_type"] == "CONNECTS_TO"
-        assert result[1]["relationship_type"] == "INTERCHANGE"
+        assert result[0]["relationship_type"] == "METRO_LINK"
+        assert result[1]["relationship_type"] == "INTERCHANGE_TO"
 
     def test_returns_empty_list_for_unknown_station(self):
         from databases.graph import queries

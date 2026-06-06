@@ -24,7 +24,7 @@
 | 3 | 認證函式（argon2 雜湊） | 陳玟茹 | 康睿恩 | 屬 `27c5a2d` |
 | 4 | 進階關聯式（fallback／日期區間） | 陳玟茹 | — | `a37a75c` |
 | 5 | **PostgreSQL 種子（`skeleton/seed_postgres.py`）** | **康睿恩** | — | `642e539` — **原計畫未分配給任何人，由組長補上**（缺它整個 DB 無法 seed） |
-| 6 | 圖形 schema／節點設計（`:Station`、`CONNECTS_TO`、`INTERCHANGE`） | 廖俊傑 | 陳玟茹（站點 id 命名協調） | `e10e4ec` |
+| 6 | 圖形 schema／節點設計（`:MetroStation`／`:NationalRailStation`、`METRO_LINK`／`RAIL_LINK`／`INTERCHANGE_TO`） | 廖俊傑 | 陳玟茹（站點 id 命名協調） | `e10e4ec` |
 | 7 | Neo4j 種子腳本（`skeleton/seed_neo4j.py`） | 廖俊傑 | — | `e10e4ec`、`c133861`、`ee76e43` |
 | 8 | 圖形查詢函式（`databases/graph/queries.py`） | 廖俊傑 | 康睿恩（審查 + 修 bug） | `6855cb6`、`2c499e5`、`1367250`、`839e348`、`b4052d4` |
 | 9 | 向量／RAG 種子（`skeleton/seed_vectors.py`） | 課程提供 | — | 課程供應，未修改 |
