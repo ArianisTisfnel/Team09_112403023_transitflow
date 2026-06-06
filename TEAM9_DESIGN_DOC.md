@@ -441,3 +441,65 @@ $ pytest tests/unit/test_phase_3.3_performance_boost.py -q
 
 這層讓資料庫存取在真實故障情境下**安全降級**（例外→結構化錯誤、連線→可健檢、查詢→可監控）。
 完整檔案清單與標記見 [`TASK6.md`](TASK6.md) §B。
+
+### 7.6 主要延伸（DB 驅動）— pgvector 工具路由器
+
+#### 動機（Motivation）
+本系統預設用本地小模型 `llama3.2:1b`。實測發現它**會漏選工具**——例如「誤點能否退費」這類
+政策問題，小模型常**不去呼叫** `search_policy`，直接幻覺回答。與其堆砌關鍵字規則，我們把
+「選哪個工具」本身當成一個**語意檢索**問題:對 13 個工具的描述建向量索引,使用者問題進來時用
+**餘弦相似度**找最相關的工具當候選/後備。這正是 pgvector 的本職,且直接打在課程主旨
+（何時用哪種資料庫）上。
+
+#### 資料庫變更（DB changes，含實際 schema）
+新增 `tool_descriptions` 表(與 `policy_documents` 同一嵌入模型/維度 768),並建 HNSW 索引:
+
+```sql
+CREATE TABLE tool_descriptions (
+    name            VARCHAR(64) PRIMARY KEY,
+    description     TEXT        NOT NULL,
+    trigger_phrases TEXT        NOT NULL DEFAULT '',
+    embedding       vector(768)
+);
+CREATE INDEX idx_tool_descriptions_embedding
+    ON tool_descriptions USING hnsw (embedding vector_cosine_ops);
+```
+
+`skeleton/seed_tool_router.py` 把每個工具的 `名稱 + 描述 + 觸發語` 嵌入後 upsert 入表。
+為維持 §B 的 DI 邊界,agent **不直接 import 查詢**,而是經 `PostgreSQLService.query_tool_candidates`
+呼叫,並以 `USE_EMBEDDING_ROUTER` 旗標控制(預設 OFF,既有行為不變)。
+
+#### 範例查詢與輸出（Example query + output）
+```sql
+-- 將使用者問題嵌入成 :q 後,取最相似的前 4 個工具
+SELECT name, 1 - (embedding <=> :q::vector) AS similarity
+FROM tool_descriptions
+ORDER BY embedding <=> :q::vector
+LIMIT 4;
+```
+
+問題「Can I get a refund if my train is delayed 45 minutes?」的實際輸出（top-4）:
+
+| name | similarity |
+|---|---|
+| **search_policy** | 0.72 |
+| get_national_rail_fare | 0.46 |
+| cancel_booking | 0.44 |
+| check_national_rail_availability | 0.41 |
+
+→ 路由器選出 `search_policy`,以 `{query: <原問題>}` 呼叫,RAG 正確引用退費政策。
+
+#### 測試佐證（Testing evidence）
+- **單元測試**:`tests/unit/test_tool_router.py` — 10 項(查詢形狀、門檻過濾、錯誤吞噬、參數推斷),全綠。
+- **離線 eval**:`eval/tool_routing_eval.py`(18 題標註集)→ **top-1 72%、recall@4 94%**
+  （正確工具有 94% 落在候選集內,即交給 LLM 的選項幾乎都含正解）。
+- **before/after**(旗標 OFF→ON,退費問題):
+  - OFF:小模型未呼叫 `search_policy`,回「需先登入」(幻覺)。
+  - ON:命中 `search_policy` → 正確引用 Delay Compensation 政策(誤點 <59 分退 50%、28 天內申請)。
+- 全套測試:`pytest tests/unit tests/integration -q` → **424 passed**(原 414 + 路由器 10)。
+
+#### 反思
+top-1 僅 72%,主因是**語意高度相近的工具對**(`get_metro_fare` vs `calculate_metro_fare`、
+含「metro」字樣的政策問題被捷運工具吸走)。這也說明為何採「候選集 + LLM 複選 + best-effort
+參數」而非「直接用 top-1」:recall@4 (94%) 比 top-1 穩健得多,讓最終決策仍交給 LLM,路由器只負責
+**縮小且不漏掉**正解。完整檔案清單見 [`TASK6.md`](TASK6.md) §C。

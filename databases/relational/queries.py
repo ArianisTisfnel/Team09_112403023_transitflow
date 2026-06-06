@@ -30,6 +30,8 @@ from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 
 from skeleton.config import PG_DSN, VECTOR_TOP_K, VECTOR_SIMILARITY_THRESHOLD
+# TASK 6 EXTENSION (§C): top-K for the pgvector tool router.
+from skeleton.config import TOOL_ROUTER_TOP_K
 # TASK 6 EXTENSION: low-volatility read caches. Only fares and metro schedules are
 # cached here; seat availability and bookings must NEVER be cached (oversell risk).
 # See TASK6.md + DESIGN_DOC §7.
@@ -1240,3 +1242,47 @@ def store_policy_document(
         with conn.cursor() as cur:
             cur.execute(sql, (title, category, content, vec_str, source_file))
             return cur.fetchone()[0]
+
+
+# ── TASK 6 EXTENSION (§C): pgvector tool router ───────────────────────────────
+
+def store_tool_description(
+    name: str,
+    description: str,
+    embedding: list[float],
+    trigger_phrases: str = "",
+) -> None:
+    """Upsert one tool's embedded description into tool_descriptions (idempotent)."""
+    sql = """
+        INSERT INTO tool_descriptions (name, description, trigger_phrases, embedding)
+        VALUES (%s, %s, %s, %s::vector)
+        ON CONFLICT (name) DO UPDATE
+            SET description     = EXCLUDED.description,
+                trigger_phrases = EXCLUDED.trigger_phrases,
+                embedding       = EXCLUDED.embedding
+    """
+    vec_str = "[" + ",".join(str(x) for x in embedding) + "]"
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (name, description, trigger_phrases, vec_str))
+
+
+def query_tool_candidates(embedding: list[float], top_k: int = TOOL_ROUTER_TOP_K) -> list[dict]:
+    """
+    Rank agent tools by cosine similarity to a query embedding. Returns the top_k
+    tools as dicts {name, similarity} sorted most-similar first. Used by the agent
+    to recover from small-model mis-routing (see skeleton/agent.py).
+    """
+    sql = """
+        SELECT name,
+               1 - (embedding <=> %s::vector) AS similarity
+        FROM tool_descriptions
+        WHERE embedding IS NOT NULL
+        ORDER BY embedding <=> %s::vector
+        LIMIT %s
+    """
+    vec_str = "[" + ",".join(str(x) for x in embedding) + "]"
+    with _connect() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, (vec_str, vec_str, top_k))
+            return [{"name": r["name"], "similarity": float(r["similarity"])} for r in cur.fetchall()]

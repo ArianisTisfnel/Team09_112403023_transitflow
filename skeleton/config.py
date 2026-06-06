@@ -43,3 +43,10 @@ NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "transitflow")
 # ── RAG settings ──────────────────────────────────────────────────────────────
 VECTOR_TOP_K           = int(os.getenv("VECTOR_TOP_K", "3"))       # How many policy chunks to retrieve
 VECTOR_SIMILARITY_THRESHOLD = float(os.getenv("VECTOR_SIMILARITY_THRESHOLD", "0.5"))
+
+# ── TASK 6 EXTENSION (§C): embedding-based tool router ──────────────────────────
+# When enabled, an empty tool selection falls back to a pgvector similarity search
+# over tool_descriptions. Default OFF so existing behaviour/tests are unchanged.
+USE_EMBEDDING_ROUTER  = os.getenv("USE_EMBEDDING_ROUTER", "false").lower() == "true"
+TOOL_ROUTER_TOP_K     = int(os.getenv("TOOL_ROUTER_TOP_K", "4"))
+TOOL_ROUTER_THRESHOLD = float(os.getenv("TOOL_ROUTER_THRESHOLD", "0.4"))

@@ -177,6 +177,10 @@ class PostgreSQLService(RelationalService):
     def query_policy_vector_search(self, embedding):
         return self._q.query_policy_vector_search(embedding)
 
+    # TASK 6 EXTENSION (§C): pgvector tool-router similarity lookup.
+    def query_tool_candidates(self, embedding, top_k=4):
+        return self._q.query_tool_candidates(embedding, top_k)
+
 
 # ── Concrete: Neo4j ───────────────────────────────────────────────────────────
 
