@@ -7,6 +7,8 @@ Then open: http://localhost:7860
 Students: You do NOT need to change this file.
 """
 
+# TASK 6 EXTENSION (Stage 3 robustness layer): streaming chat + live tool-status. See TASK6.md §B.
+
 import queue
 import sys
 import threading

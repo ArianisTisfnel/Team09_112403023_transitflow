@@ -18,6 +18,8 @@ CLASS HIERARCHY:
       Neo4jService         ← delegates to databases/graph/queries.py
 """
 
+# TASK 6 EXTENSION (Stage 3 robustness layer): DI database-service abstraction. See TASK6.md §B.
+
 from __future__ import annotations
 
 import importlib

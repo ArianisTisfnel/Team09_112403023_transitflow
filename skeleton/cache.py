@@ -8,6 +8,8 @@ CACHE RULES:
 - DO NOT cache: seat availability and bookings (real-time, oversell risk)
 """
 
+# TASK 6 EXTENSION: query-result cache (TTL-aware LRU). See TASK6.md + DESIGN_DOC §7.
+
 from __future__ import annotations
 
 import logging

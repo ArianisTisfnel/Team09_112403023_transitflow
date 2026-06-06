@@ -7,6 +7,8 @@ instead of leaking a Python traceback to the UI. Every exception carries a
 human-readable .message and a machine-readable .error_code.
 """
 
+# TASK 6 EXTENSION (Stage 3 robustness layer): structured exception hierarchy. See TASK6.md §B.
+
 
 class TransitFlowException(Exception):
     """Base class for all TransitFlow domain errors."""

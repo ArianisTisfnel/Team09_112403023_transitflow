@@ -6,6 +6,7 @@ include `timestamp`, `event`, and any extra keyword args (e.g. `tool`,
 `duration_ms`).  Exception stack traces are serialised as a string under
 `stack_trace` so nested payloads stay valid JSON.
 """
+# TASK 6 EXTENSION (Stage 3 robustness layer): JSON structured logging. See TASK6.md §B.
 from __future__ import annotations
 
 import json
