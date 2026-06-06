@@ -263,7 +263,144 @@ pgvector 以 `<=>`（餘弦距離）運算，查詢轉回相似度 `1 - (embeddi
 
 ## Section 7 — Optional Extension（Task 6，選做，+15）
 
-> 若要爭取加分，本組可將 **Stage 3 基礎設施**（cache 與 Neo4j 連線池為 DB 相關擴充）
-> 作為延伸：說明動機、附 schema/程式片段、範例查詢與輸出、測試佐證，並於 repo 根目錄
-> 附 `TASK6.md` 列出修改檔案、每檔加 `# TASK 6 EXTENSION:` 標記。
-> （目前先留白，視時間決定是否爭取。）
+> 本組的延伸主題為 **資料庫存取效能層（Database Access Performance Layer）**：在既有
+> 查詢之上加入 **TTL-aware LRU 查詢快取** 與 **Neo4j 連線池**，降低重複查詢的資料庫往返與
+> 連線建立成本。修改/新增檔案清單見 repo 根目錄 [`TASK6.md`](TASK6.md)，相關程式碼皆以
+> `# TASK 6 EXTENSION:` 標記。
+
+### 7.1 動機（Motivation）
+
+agent 在一次對話中常對**同一筆**票價／捷運班次重複查詢（例如 `query_cheapest_route` 逐段
+詢價、使用者反覆問同一條路線）。這些資料**變動極低**——票價與班次在一天內幾乎不變——卻每次
+都打一趟 PostgreSQL。圖查詢端則是每次都新建 Neo4j driver（昂貴的握手 + 連線建立）。因此本
+延伸鎖定兩個資料庫存取熱點：
+
+- **讀取快取**：對低變動的查詢結果做 TTL + LRU 快取，命中時**完全跳過資料庫**。
+- **連線池**：Neo4j driver 改為 module-level 單例（`max_connection_pool_size=10`），取代
+  「每次查詢建一個 driver」。
+
+**安全邊界（關鍵）**：座位可用性（`query_available_seats`）與訂票（`execute_booking`）
+**絕不快取**——它們是即時、且攸關超賣的資料。此約束由測試強制（見 7.4 第 7 群組）。
+
+### 7.2 資料庫變更（DB changes，含程式片段）
+
+**(a) `CacheManager`（`skeleton/cache.py`）— thread-safe LRU + per-entry TTL**
+
+```python
+class CacheManager:
+    """Thread-safe LRU cache with per-entry TTL expiry."""
+    def get(self, key: str) -> Optional[Any]:
+        with self._lock:
+            if key not in self._store:
+                self._misses += 1; return None
+            value, expire_at = self._store[key]
+            if time.monotonic() > expire_at:          # TTL 過期 → 視為 miss
+                del self._store[key]; self._misses += 1; return None
+            self._store.move_to_end(key)              # LRU：命中即移到最新
+            self._hits += 1
+            return value
+```
+
+三個 module-level 實例，依資料變動率配置不同 TTL／容量：
+
+```python
+fare_cache     = CacheManager(max_size=512, ttl_seconds=600)   # 票價最穩定
+schedule_cache = CacheManager(max_size=256, ttl_seconds=300)   # 班次當日穩定
+policy_cache   = CacheManager(max_size=100, ttl_seconds=3600)  # 政策文件，啟動預載
+```
+
+**(b) 整合進查詢函式（`databases/relational/queries.py`）**
+
+`query_national_rail_fare` 在打 DB 前先查快取，命中即返回；**miss 不快取**（班次稍後可能出現）：
+
+```python
+cache_key = f"fare:{schedule_id}:{fare_class}:{stops_travelled}"
+cached = fare_cache.get(cache_key)
+if cached is not None:
+    return cached                  # cache HIT — 完全跳過 DB 往返
+# ... 查 DB、計算票價 ...
+if row is None:
+    return None                    # 永不快取 miss
+fare_cache.set(cache_key, fare_result)
+```
+
+`query_metro_schedules` 同型，key 為 `metro_sched:{origin_id}:{destination_id}`。
+
+**(c) `Neo4jConnectionPool`（`databases/graph/connection_pool.py`）— driver 單例**
+
+```python
+class Neo4jConnectionPool:
+    def __init__(self, uri, user, password, max_pool_size=10):
+        self._driver = GraphDatabase.driver(
+            uri, auth=(user, password),
+            max_connection_pool_size=max_pool_size)   # 固定池大小
+    def __exit__(self, *_): pass                       # 結束不關池，僅關 session
+
+_pool = None
+def get_pool() -> Neo4jConnectionPool:                 # lazy 單例
+    global _pool
+    if _pool is None:
+        _pool = Neo4jConnectionPool(NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD)
+    return _pool
+```
+
+`databases/graph/queries.py` 的 6 個查詢全改用 `with get_pool() as driver:`，移除舊的
+per-query `_driver()` 工廠。
+
+**(d) 啟動預熱（`skeleton/vector_warmup.py`）**：`warmup_policy_cache()` 在 UI 啟動時把
+前 50 筆政策文件載入 `policy_cache`（key `policy:{id}`），首次 RAG 查詢即免冷啟。
+
+### 7.3 範例查詢與輸出（Example query + output）
+
+對**同一條票價**連續查兩次，第二次命中快取、不再打 DB：
+
+```python
+>>> query_national_rail_fare("NR_SCH01", "standard", 5)   # 第一次：查 DB
+{'schedule_id': 'NR_SCH01', 'fare_class': 'standard', 'stops_travelled': 5,
+ 'base_fare_usd': 45.0, 'fare_multiplier': 1.0, 'total_fare_usd': 45.0, 'currency': 'USD'}
+
+>>> query_national_rail_fare("NR_SCH01", "standard", 5)   # 第二次：命中快取
+{'schedule_id': 'NR_SCH01', ... 'total_fare_usd': 45.0, 'currency': 'USD'}   # 同結果
+
+>>> fare_cache.stats()
+{'size': 1, 'active': 1, 'max_size': 512, 'ttl_seconds': 600, 'hits': 1, 'misses': 1}
+```
+
+`hits=1` 證明第二次由快取回應；測試 `test_second_call_with_same_args_skips_database`
+進一步斷言 `_connect` 只被呼叫**一次**。
+
+### 7.4 測試佐證（Testing evidence）
+
+`tests/unit/test_phase_3.3_performance_boost.py` — **51 個測試全數通過**，涵蓋 8 個面向：
+
+| # | 群組 | 驗證重點 |
+|---|---|---|
+| 1 | `CacheManager` | TTL 過期、LRU 汰換、get/set/clear、stats、鍵不碰撞 |
+| 2 | module 級實例 | `fare_cache`/`schedule_cache`/`policy_cache` 型別與獨立性 |
+| 3 | `Neo4jConnectionPool` | 單例、`max_connection_pool_size=10`、結束不關 driver |
+| 4 | `warmup_policy_cache` | 載入計數、key 格式、DB 失敗回 0 不拋例外 |
+| 5 | 票價快取整合 | 第二次相同參數**跳過 DB**、不同參數重打、miss 不快取 |
+| 6 | 班次快取整合 | 同上，key 含 origin+destination |
+| 7 | **不快取約束** | `query_available_seats`／`execute_booking` 原始碼**不得**出現任何 cache |
+| 8 | 圖查詢用連線池 | `graph/queries.py` 不再定義 `_driver()`、改用 `get_pool()` |
+
+```
+$ pytest tests/unit/test_phase_3.3_performance_boost.py -q
+51 passed in 0.30s
+```
+
+### 7.5 次要延伸 — Stage 3 健壯性層（Robustness Layer）
+
+效能層（7.2–7.4）之外，本組另補上一層生產級的穩定性／可觀測性設施，與快取／連線池互補：
+
+| 設施 | 檔案 | 作用 |
+|---|---|---|
+| 領域例外體系 + `@error_handler` | `skeleton/exceptions.py`、`skeleton/agent.py` | 失敗轉成結構化 JSON，不外洩 traceback |
+| 依賴注入資料庫服務層 | `skeleton/database_service.py` | `DatabaseService` 抽象介面 + `PostgreSQLService`/`Neo4jService`，agent 不耦合驅動、可注入替身測試 |
+| 結構化 JSON 日誌 | `skeleton/logging_config.py` | 每行一筆 JSON，含 `timestamp`/`event`/`tool`/`duration_ms` |
+| Prometheus 指標 | `skeleton/metrics.py` | `query_counter`、`query_duration`（標籤 tool/status） |
+| 健康檢查 | `skeleton/health_check.py` | `healthz()` 探測兩個資料庫連線 |
+| 串流 UI + 即時工具狀態 | `skeleton/ui.py` | generator-based 聊天輸出 |
+
+這層讓資料庫存取在真實故障情境下**安全降級**（例外→結構化錯誤、連線→可健檢、查詢→可監控）。
+完整檔案清單與標記見 [`TASK6.md`](TASK6.md) §B。
