@@ -8,9 +8,13 @@
 
 ## Section 1 — Entity-Relationship Diagram（實體關係圖）
 
-TransitFlow 的關聯式資料庫共 11 張表（含一張 RAG 用的向量表）。下圖以
-Mermaid 呈現實體、主鍵/外鍵與關係基數；**繳交版建議另以 dbdiagram.io 由本節末的
-DBML 生成一張圖檔內嵌**（基數需標在連線上）。
+TransitFlow 的關聯式資料庫共 11 張表（含一張 RAG 用的向量表）。下圖為以
+dbdiagram.io 生成的 ER 圖（基數標在連線上）；其後並附 Mermaid 版本與 DBML 原始碼。
+
+![TransitFlow ER 圖](docs/erd.png)
+
+> 以上 PNG 由 `docs/erd.dbml` 在 dbdiagram.io 生成。下方 Mermaid 為等價的內嵌版本
+> （GitHub 可直接渲染）。
 
 ```mermaid
 erDiagram
