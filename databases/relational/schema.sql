@@ -33,6 +33,7 @@ DROP TABLE IF EXISTS metro_stations CASCADE;
 DROP TABLE IF EXISTS national_rail_stations CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
 DROP TABLE IF EXISTS policy_documents CASCADE;
+DROP TABLE IF EXISTS tool_descriptions CASCADE;
 
 -- ============================================================
 --  RELATIONAL SCHEMA — Track A implementation
@@ -386,3 +387,21 @@ CREATE TABLE IF NOT EXISTS policy_documents (
 -- Index for fast cosine similarity search
 CREATE INDEX IF NOT EXISTS idx_policy_documents_embedding
     ON policy_documents USING hnsw (embedding vector_cosine_ops);
+
+-- ============================================================
+--  TASK 6 EXTENSION (§C): pgvector-backed tool router
+--  Stores one embedded description per agent tool so the agent can pick the
+--  right tool by semantic similarity (cosine) when a small LLM mis-routes.
+--  Seeded by skeleton/seed_tool_router.py; queried by query_tool_candidates().
+--  768-dim → Ollama nomic-embed-text (same model/dim as policy_documents).
+-- ============================================================
+CREATE TABLE IF NOT EXISTS tool_descriptions (
+    name            VARCHAR(64) PRIMARY KEY,
+    description     TEXT        NOT NULL,
+    trigger_phrases TEXT        NOT NULL DEFAULT '',
+    embedding       vector(768),
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tool_descriptions_embedding
+    ON tool_descriptions USING hnsw (embedding vector_cosine_ops);

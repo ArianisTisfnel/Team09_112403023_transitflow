@@ -355,6 +355,43 @@ def _summarise_result(tool_name: str, result_json: str) -> str:
     return result_json
 
 
+# ── TASK 6 EXTENSION (§C): pgvector-backed tool router ────────────────────────
+from skeleton import config as _cfg
+
+
+def _embedding_route_candidates(db, user_message: str) -> list[dict]:
+    """
+    Rank agent tools by pgvector cosine similarity to the user message, via the
+    injected relational service (db.query_tool_candidates) — no direct query
+    import, to respect the DI boundary. Returns candidates above
+    TOOL_ROUTER_THRESHOLD most-similar first, or [] when disabled / on error.
+    Never raises.
+    """
+    if not _cfg.USE_EMBEDDING_ROUTER:
+        return []
+    try:
+        emb = llm.embed(user_message)
+        cands = db.query_tool_candidates(emb, _cfg.TOOL_ROUTER_TOP_K)
+        return [c for c in cands if c["similarity"] >= _cfg.TOOL_ROUTER_THRESHOLD]
+    except Exception:
+        return []
+
+
+def _router_params_for(name, message, email, station_ids, lower):
+    """Best-effort params for a router-selected tool; None when they can't be inferred safely."""
+    if name == "search_policy":
+        return {"query": message}
+    if name == "get_user_bookings":
+        return {} if email else None
+    two = len(station_ids) >= 2
+    if name == "find_route" and two:
+        opt = "cost" if any(k in lower for k in ("cheap", "cheapest", "lowest cost")) else "time"
+        return {"origin_id": station_ids[0].upper(), "destination_id": station_ids[1].upper(), "optimise_by": opt}
+    if name in ("check_national_rail_availability", "check_metro_availability", "get_metro_fare") and two:
+        return {"origin_id": station_ids[0].upper(), "destination_id": station_ids[1].upper()}
+    return None  # tools needing schedule_id / booking_id etc. — leave to the LLM
+
+
 def _parse_tool_calls(llm_response: str) -> list[dict] | None:
     """
     Parse tool call JSON from the LLM response.
@@ -746,6 +783,20 @@ JSON:"""
                                    "list booking", "show my", "view my"}
             if any(kw in _lower for kw in _personal_triggers):
                 _fallback("get_user_bookings", {}, "personal booking query")
+
+        # TASK 6 EXTENSION (§C): pgvector tool-router fallback. When the LLM and the
+        # keyword rules above selected nothing, pick the most semantically similar
+        # tool from tool_descriptions. Default OFF (USE_EMBEDDING_ROUTER) so existing
+        # behaviour is unchanged; recovers cases the small model mis-routes (e.g. it
+        # ignores policy/RAG questions).
+        if _cfg.USE_EMBEDDING_ROUTER and not tool_calls:
+            for cand in _embedding_route_candidates(self.db, user_message):
+                params = _router_params_for(
+                    cand["name"], user_message, current_user_email, _station_ids, _lower
+                )
+                if params is not None:
+                    _fallback(cand["name"], params, f"embedding router (sim={cand['similarity']:.2f})")
+                    break
 
         # Step 2: Execute each tool call against the real databases
         tool_results = []

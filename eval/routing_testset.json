@@ -1,0 +1,20 @@
+[
+  {"query": "Can I get a refund if my train is delayed 45 minutes?", "expected": "search_policy"},
+  {"query": "What is the company policy on bringing a bicycle on national rail?", "expected": "search_policy"},
+  {"query": "Am I allowed to take my dog on the metro?", "expected": "search_policy"},
+  {"query": "What are the rules for child fares?", "expected": "search_policy"},
+  {"query": "What is the fastest metro route from MS01 to MS09?", "expected": "find_route"},
+  {"query": "How do I get from MS01 to NR05 using both networks?", "expected": "find_route"},
+  {"query": "Cheapest way from NR01 to NR05?", "expected": "find_route"},
+  {"query": "If NR03 is closed, what alternative routes exist from NR01 to NR05?", "expected": "find_alternative_routes"},
+  {"query": "Which stations are affected if there is a disruption at NR03?", "expected": "get_delay_ripple"},
+  {"query": "Show my bookings", "expected": "get_user_bookings"},
+  {"query": "What trains run from NR01 to NR05 on 2026-06-10?", "expected": "check_national_rail_availability"},
+  {"query": "Are there metro services between MS01 and MS09?", "expected": "check_metro_availability"},
+  {"query": "How much does the metro cost from MS01 to MS09?", "expected": "get_metro_fare"},
+  {"query": "What seats are available on NR_SCH01 in first class?", "expected": "get_available_seats"},
+  {"query": "Book me a standard ticket from NR01 to NR05 on 2026-06-10", "expected": "make_booking"},
+  {"query": "Cancel booking BK-A1B2C3", "expected": "cancel_booking"},
+  {"query": "What compensation am I entitled to for a one hour delay?", "expected": "search_policy"},
+  {"query": "Quickest route from MS01 to MS14", "expected": "find_route"}
+]

@@ -110,3 +110,48 @@ $ pytest tests/unit/test_phase_3.1_exception_layer.py \
 
 §B 為依早期規劃（老師更新前的 README.md 中提到的加分項）所建的健壯性層；其價值在於**讓資料庫存取在真實故障情境下安全降級**
 （例外→結構化錯誤、連線→可健檢、查詢→可監控），與 §A 的效能層互補。
+
+---
+
+## §C — pgvector 工具路由器（主要延伸，DB 驅動）
+
+> 一句話：用 **pgvector 對「使用者問題 ↔ 工具描述」做餘弦相似度**，當小模型
+> （`llama3.2:1b`）漏選工具時，以最相關的工具作為候選/後備，修正錯誤路由。
+> 旗標 `USE_EMBEDDING_ROUTER` 預設 **OFF**，既有行為與測試完全不變。
+
+### 新增檔案
+
+| 檔案 | 內容 | 主要 function / 物件 |
+|---|---|---|
+| `skeleton/seed_tool_router.py` | 把 13 個工具描述嵌入 `tool_descriptions`（冪等 upsert） | `seed()`、`TRIGGER_PHRASES` |
+| `eval/tool_routing_eval.py` + `eval/routing_testset.json` | 離線量測路由準確率（18 題） | top-1 / recall@k |
+| `tests/unit/test_tool_router.py` | 路由器單元測試（10 項，mock，無需 DB） | — |
+
+### 修改檔案
+
+| 檔案 | 修改內容 | 受影響項目 |
+|---|---|---|
+| `databases/relational/schema.sql` | 新增 `tool_descriptions(name PK, description, trigger_phrases, embedding vector(768))` + HNSW 索引 | `-- TASK 6 EXTENSION (§C)` |
+| `databases/relational/queries.py` | 新增相似度查詢與 upsert | `query_tool_candidates()`、`store_tool_description()` |
+| `skeleton/database_service.py` | `PostgreSQLService` 加 `query_tool_candidates`（維持 DI，agent 不直接 import 查詢） | `PostgreSQLService.query_tool_candidates` |
+| `skeleton/agent.py` | 旗標控制的後備路由：LLM/規則皆未選時，用相似度候選 + best-effort 參數 | `_embedding_route_candidates()`、`_router_params_for()` |
+| `skeleton/config.py` | 旗標與門檻 | `USE_EMBEDDING_ROUTER`、`TOOL_ROUTER_TOP_K`、`TOOL_ROUTER_THRESHOLD` |
+
+### 受影響的資料表 / 資料來源
+
+| 資料庫 | 資料表 | 角色 |
+|---|---|---|
+| PostgreSQL + pgvector | `tool_descriptions` | 工具描述向量；`query_tool_candidates` 以餘弦相似度排序 |
+
+### 測試佐證
+
+```
+$ pytest tests/unit/test_tool_router.py -q          # 10 passed
+$ python eval/tool_routing_eval.py                  # 18 題：top-1 72%、recall@4 94%
+```
+
+before/after（旗標 OFF→ON，問題：「Can I get a refund if my train is delayed 45 minutes?」）：
+- **OFF**：`llama3.2:1b` 未呼叫 `search_policy`，回「需先登入」（錯誤幻覺）。
+- **ON**：路由器命中 `search_policy` → 正確引用 Delay Compensation 政策（誤點 <59 分退 50%）。
+
+完整動機／schema／範例查詢與輸出見 [`TEAM9_DESIGN_DOC.md`](TEAM9_DESIGN_DOC.md) §7.6。
