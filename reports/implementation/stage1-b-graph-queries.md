@@ -1,6 +1,6 @@
 # Stage 1 — 主軸 B 實作報告:Neo4j 圖形查詢層
 
-> **作者**:廖俊傑(主軸 B)
+> **作者**:主軸 B
 > **涵蓋範圍**:`docs/13`–`docs/20`(主軸 B 全部任務)
 > **狀態**:程式碼 8/8 函式完成,本地驗收全部通過
 > **最後更新**:2026-05-27
@@ -382,8 +382,8 @@ RETURN length(path) AS hop_count
 
 ### 6.3 完整 pytest 套件
 
-康睿恩主軸負責的 `tests/unit/`、`tests/integration/` 套件目前是空殼。
-**等他撰寫測試後**,主軸 B 函式應該全部通過:
+組長負責的 `tests/unit/`、`tests/integration/` 套件目前是空殼。
+**等測試撰寫後**,主軸 B 函式應該全部通過:
 
 ```bash
 pytest tests/unit/ -v -k "station_connections or alternative_routes or interchange_path or interchange_feasibility"
@@ -398,9 +398,9 @@ pytest tests/integration/ -v -k "shortest_route or delay_ripple or cheapest_rout
 
 | 工作 | 依賴 | 影響 |
 |---|---|---|
-| Track A PR #1 merge | 陳玟茹 | 解鎖 `query_cheapest_route` 真實票價驗證 |
-| Stage 3.3 connection_pool 正式版(docs/25) | 康睿恩 | 覆蓋目前 stub,自動啟用真實 Neo4j 連線 |
-| Stage 3.2 agent DI 重構(docs/24) | 康睿恩 | 主軸 B 函式被 agent 動態載入 |
+| Track A PR #1 merge | 主軸 A | 解鎖 `query_cheapest_route` 真實票價驗證 |
+| Stage 3.3 connection_pool 正式版(docs/25) | 組長 | 覆蓋目前 stub,自動啟用真實 Neo4j 連線 |
+| Stage 3.2 agent DI 重構(docs/24) | 組長 | 主軸 B 函式被 agent 動態載入 |
 
 ### 7.2 主軸 B 自身的選做加分項
 

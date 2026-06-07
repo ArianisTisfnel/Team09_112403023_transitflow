@@ -71,18 +71,6 @@ Use this as a starting point. Adjust it to your team.
 | Graph schema + queries | `databases/graph/queries.py` | Station IDs from relational schema |
 | Seeding & testing | `skeleton/seed_postgres.py`, `skeleton/seed_neo4j.py` | Both schemas |
 
-**Document your assignments.** Create a `TEAM.md` file at the project root:
-
-```markdown
-# Team Assignments
-
-| Name  | Primary responsibility                          |
-|-------|-------------------------------------------------|
-| 康睿恩 | 開發流程規劃、實作計畫撰寫、實作階段三內容、單元測試與整合測試、撰寫測試報告、專案協作程式碼審查  |
-| Bob   | Graph schema + graph query functions            |
-| Carol | Seeding scripts + integration testing           |
-```
-
 ### 1.2 — Git Basics (Step by Step)
 
 If you are new to Git, follow this pattern every time you start working:
