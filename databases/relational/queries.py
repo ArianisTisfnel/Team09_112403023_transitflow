@@ -1267,6 +1267,14 @@ def store_tool_description(
             cur.execute(sql, (name, description, trigger_phrases, vec_str))
 
 
+def clear_tool_descriptions() -> None:
+    """Remove all rows from tool_descriptions so a re-seed reflects the exact current
+    tool set (e.g. after excluding near-duplicate tools)."""
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM tool_descriptions")
+
+
 def query_tool_candidates(embedding: list[float], top_k: int = TOOL_ROUTER_TOP_K) -> list[dict]:
     """
     Rank agent tools by cosine similarity to a query embedding. Returns the top_k

@@ -68,3 +68,7 @@ TEAM9_WORK_ALLOCATION.md
 # Local scratch / temporary helpers — not part of the submission
 _run_ui_alt.py
 docs/額外補充.md
+
+# Peer Review Reports — individual, confidential, EEClass-only (never in repo)
+peer_review/
+*PEER_REVIEW*
