@@ -804,6 +804,12 @@ JSON:"""
             tool_name = call.get("name", "")
             params    = call.get("params") or call.get("parameters", {})
 
+            # TASK 6 EXTENSION (§C): small-model param rescue. The 1B model sometimes
+            # selects search_policy but omits the required `query`; backfill it from the
+            # user's message instead of crashing on a missing key.
+            if tool_name == "search_policy" and not params.get("query"):
+                params["query"] = user_message
+
             # Skip calls with empty string values — LLM failed to extract params
             if any(v == "" for v in params.values()):
                 if debug:

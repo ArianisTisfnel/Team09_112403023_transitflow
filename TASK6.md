@@ -121,7 +121,7 @@ $ pytest tests/unit/test_phase_3.1_exception_layer.py \
 
 | 檔案 | 內容 | 主要 function / 物件 |
 |---|---|---|
-| `skeleton/seed_tool_router.py` | 把 13 個工具描述嵌入 `tool_descriptions`（冪等 upsert） | `seed()`、`TRIGGER_PHRASES` |
+| `skeleton/seed_tool_router.py` | 把 12 個工具描述嵌入 `tool_descriptions`（冪等；排除與 `get_metro_fare` 重複的 `calculate_metro_fare`） | `seed()`、`TRIGGER_PHRASES`、`SKIP_TOOLS` |
 | `eval/tool_routing_eval.py` + `eval/routing_testset.json` | 離線量測路由準確率（18 題） | top-1 / recall@k |
 | `tests/unit/test_tool_router.py` | 路由器單元測試（10 項，mock，無需 DB） | — |
 
@@ -132,7 +132,7 @@ $ pytest tests/unit/test_phase_3.1_exception_layer.py \
 | `databases/relational/schema.sql` | 新增 `tool_descriptions(name PK, description, trigger_phrases, embedding vector(768))` + HNSW 索引 | `-- TASK 6 EXTENSION (§C)` |
 | `databases/relational/queries.py` | 新增相似度查詢與 upsert | `query_tool_candidates()`、`store_tool_description()` |
 | `skeleton/database_service.py` | `PostgreSQLService` 加 `query_tool_candidates`（維持 DI，agent 不直接 import 查詢） | `PostgreSQLService.query_tool_candidates` |
-| `skeleton/agent.py` | 旗標控制的後備路由：LLM/規則皆未選時，用相似度候選 + best-effort 參數 | `_embedding_route_candidates()`、`_router_params_for()` |
+| `skeleton/agent.py` | 旗標控制的後備路由（LLM/規則皆未選時用相似度候選 + best-effort 參數）；另加 `search_policy` 小模型參數救援（缺 `query` 時以使用者訊息回填，避免崩潰） | `_embedding_route_candidates()`、`_router_params_for()` |
 | `skeleton/config.py` | 旗標與門檻 | `USE_EMBEDDING_ROUTER`、`TOOL_ROUTER_TOP_K`、`TOOL_ROUTER_THRESHOLD` |
 
 ### 受影響的資料表 / 資料來源
@@ -145,8 +145,11 @@ $ pytest tests/unit/test_phase_3.1_exception_layer.py \
 
 ```
 $ pytest tests/unit/test_tool_router.py -q          # 10 passed
-$ python eval/tool_routing_eval.py                  # 18 題：top-1 72%、recall@4 94%
+$ python eval/tool_routing_eval.py                  # 18 題：top-1 89%、recall@4 100%
 ```
+
+> 補強記錄：排除與 `get_metro_fare` 重複的 `calculate_metro_fare`、強化易混工具的
+> trigger 字眼後，top-1 由 72% → **89%**、recall@4 由 94% → **100%**。
 
 before/after（旗標 OFF→ON，問題：「Can I get a refund if my train is delayed 45 minutes?」）：
 - **OFF**：`llama3.2:1b` 未呼叫 `search_policy`，回「需先登入」（錯誤幻覺）。
