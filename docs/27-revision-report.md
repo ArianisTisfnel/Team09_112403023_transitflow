@@ -4,7 +4,7 @@
 > （`docs/README-teacher-updated.md`）做一次收斂，校準兩處設計：圖綱要命名、票價模型。
 > 本報告記錄動機、變更、影響檔案與驗證結果。
 >
-> 最終設計以根目錄 [`TEAM9_DESIGN_DOC.md`](../TEAM9_DESIGN_DOC.md) 為準；`docs/01–26`
+> 最終設計以根目錄 [`Team09_DESIGN_DOC.md`](../Team09_DESIGN_DOC.md) 為準；`docs/01–26`
 > 保留為開發期規劃紀錄，未逐篇改寫。
 
 ---

@@ -1,7 +1,5 @@
 # Task 6 — Optional Extension
 
-**Team 9** — 康睿恩、陳玟茹、廖俊傑
-
 本組的延伸分兩層，所有延伸程式碼皆以 `# TASK 6 EXTENSION:` 註解標記：
 
 - **§A 主要延伸 — Database Access Performance Layer**：在既有查詢之上加入 **TTL-aware
@@ -10,7 +8,7 @@
   日誌、Prometheus 指標、健康檢查、串流 UI，提升整體穩定性與可觀測性。
 
 完整說明（動機、程式片段、範例輸出、測試佐證）見設計文件
-[`TEAM9_DESIGN_DOC.md`](TEAM9_DESIGN_DOC.md) Section 7。
+[`Team09_DESIGN_DOC.md`](Team09_DESIGN_DOC.md) Section 7。
 
 ---
 
@@ -154,4 +152,4 @@ before/after（旗標 OFF→ON，問題：「Can I get a refund if my train is d
 - **OFF**：`llama3.2:1b` 未呼叫 `search_policy`，回「需先登入」（錯誤幻覺）。
 - **ON**：路由器命中 `search_policy` → 正確引用 Delay Compensation 政策（誤點 <59 分退 50%）。
 
-完整動機／schema／範例查詢與輸出見 [`TEAM9_DESIGN_DOC.md`](TEAM9_DESIGN_DOC.md) §7.6。
+完整動機／schema／範例查詢與輸出見 [`Team09_DESIGN_DOC.md`](Team09_DESIGN_DOC.md) §7.6。

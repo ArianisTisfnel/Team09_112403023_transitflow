@@ -1,7 +1,7 @@
 # TransitFlow — 智慧鐵路助理
 
 > **IM2002 資料庫管理 — 期末專案**
-> 組別：9　成員：康睿恩（組長）、陳玟茹、廖俊傑
+> 組別：9（3 人；分工見 Work Allocation Report，經 EEClass 繳交）
 > 評分標準：https://github.com/NCUIM-Lab710-Teaching/IM2002-grading-students
 
 TransitFlow 是一個雙網路（城市捷運 + 國鐵）交通營運商的 AI 聊天助理。它透過查詢
@@ -78,7 +78,7 @@ pytest                      # 全部
 | 組件（／100） | 在本 repo 的佐證位置 |
 |---|---|
 | **靜態程式碼** | `databases/relational/schema.sql`（schema）、`databases/relational/queries.py`（PostgreSQL 查詢）、`skeleton/seed_postgres.py`（種子）、`databases/graph/seed.cypher` + `skeleton/seed_neo4j.py`（圖形設計 + 種子）、`databases/graph/queries.py`（Cypher 查詢） |
-| **設計文件** | `TEAM9_DESIGN_DOC.md`（ER、正規化、圖形理由、RAG、AI 使用、反思）。背景素材：`docs/` 下的兩份 tutorial |
+| **設計文件** | `Team09_DESIGN_DOC.md`（ER、正規化、圖形理由、RAG、AI 使用、反思）。背景素材：`docs/` 下的兩份 tutorial |
 | **現場測試** | 依上方「快速開始」執行 —— 助教會 seed 資料庫並操作 Gradio UI |
 
 團隊流程與貢獻紀錄：[TEAM.md](TEAM.md)（工作分配、Git 流程）、

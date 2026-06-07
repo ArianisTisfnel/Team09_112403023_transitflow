@@ -4,7 +4,7 @@
 > 終極驗收標準：`pytest tests/ -v` 全部 PASS。
 
 > ⚠️ **文件定位**：`docs/01–26` 為**開發期的規劃文件**，反映各階段當下的計畫。
-> **最終設計以根目錄 [`TEAM9_DESIGN_DOC.md`](../TEAM9_DESIGN_DOC.md) 為準**；開發後期的
+> **最終設計以根目錄 [`Team09_DESIGN_DOC.md`](../Team09_DESIGN_DOC.md) 為準**；開發後期的
 > 設計調整（圖綱要命名、票價模型）彙整於 [`27-revision-report.md`](27-revision-report.md)。
 
 ---
