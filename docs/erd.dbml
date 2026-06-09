@@ -54,6 +54,14 @@ Table metro_schedules {
   created_at             timestamptz
 }
 
+Table metro_schedule_stops {
+  schedule_id                 varchar(30) [pk, note: 'ordered stop sequence — 3NF junction, not an array column']
+  station_id                  varchar(20) [pk]
+  stop_order                  integer     [not null]
+  travel_time_from_origin_min integer     [not null]
+  created_at                  timestamptz
+}
+
 Table national_rail_schedules {
   schedule_id            varchar(30) [pk]
   line                   varchar(20) [not null]
@@ -65,6 +73,14 @@ Table national_rail_schedules {
   last_train_time        time        [not null]
   base_fare_usd          numeric     [not null]
   created_at             timestamptz
+}
+
+Table national_rail_schedule_stops {
+  schedule_id                 varchar(30) [pk, note: 'ordered stop sequence — 3NF junction, not an array column']
+  station_id                  varchar(20) [pk]
+  stop_order                  integer     [not null]
+  travel_time_from_origin_min integer     [not null]
+  created_at                  timestamptz
 }
 
 Table national_rail_seat_layouts {
@@ -138,10 +154,16 @@ Ref: metro_station_adjacencies.destination_station_id > metro_stations.metro_sta
 
 Ref: metro_schedules.origin_station_id > metro_stations.metro_station_id
 Ref: metro_schedules.destination_station_id > metro_stations.metro_station_id
+
+Ref: metro_schedule_stops.schedule_id > metro_schedules.schedule_id
+Ref: metro_schedule_stops.station_id > metro_stations.metro_station_id
 Ref: national_rail_schedules.origin_station_id > national_rail_stations.national_rail_station_id
 Ref: national_rail_schedules.destination_station_id > national_rail_stations.national_rail_station_id
 
 Ref: national_rail_seat_layouts.schedule_id > national_rail_schedules.schedule_id
+
+Ref: national_rail_schedule_stops.schedule_id > national_rail_schedules.schedule_id
+Ref: national_rail_schedule_stops.station_id > national_rail_stations.national_rail_station_id
 
 Ref: national_rail_bookings.user_id > users.user_id
 Ref: national_rail_bookings.schedule_id > national_rail_schedules.schedule_id
