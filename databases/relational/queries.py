@@ -21,7 +21,7 @@ import json
 import random
 import string
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, time
 from typing import Optional
 
 import psycopg2
@@ -75,8 +75,16 @@ def query_national_rail_availability(
     travel_date: Optional[str] = None,
 ) -> list[dict]:
     """
-    Return national rail schedules that serve both origin and destination stations
-    in the correct order, along with seat occupancy for the requested travel date.
+    Return national rail schedules that call at BOTH the requested origin and
+    destination, in the correct direction (origin before destination in the stop
+    sequence), along with seat occupancy for the requested travel date.
+
+    Matching is by the national_rail_schedule_stops junction (so.stop_order <
+    sd.stop_order), not by the schedule's terminal endpoints — so a journey
+    between any two intermediate stations a service calls at is found, while
+    express services that skip either station are correctly excluded. The
+    returned origin_station_id/destination_station_id are the requested journey
+    endpoints, and stops_travelled is the number of segments between them.
     """
     with _connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -93,17 +101,22 @@ def query_national_rail_availability(
                     )
                     SELECT
                         s.schedule_id, s.line, s.direction,
-                        s.origin_station_id, s.destination_station_id,
+                        so.station_id AS origin_station_id,
+                        sd.station_id AS destination_station_id,
+                        (sd.stop_order - so.stop_order) AS stops_travelled,
                         s.first_train_time, s.last_train_time, s.base_fare_usd,
                         %s::DATE AS travel_date,
                         sl.total_seats,
                         COALESCE(bc.booked_seats, 0) AS booked_seats,
                         sl.total_seats - COALESCE(bc.booked_seats, 0) AS available_seats
                     FROM national_rail_schedules s
+                    JOIN national_rail_schedule_stops so
+                        ON so.schedule_id = s.schedule_id AND so.station_id = %s
+                    JOIN national_rail_schedule_stops sd
+                        ON sd.schedule_id = s.schedule_id AND sd.station_id = %s
                     LEFT JOIN national_rail_seat_layouts sl ON s.schedule_id = sl.schedule_id
                     LEFT JOIN bookings_count bc ON s.schedule_id = bc.schedule_id
-                    WHERE s.origin_station_id = %s
-                      AND s.destination_station_id = %s
+                    WHERE so.stop_order < sd.stop_order
                       AND sl.total_seats - COALESCE(bc.booked_seats, 0) > 0
                     ORDER BY s.schedule_id ASC
                 """
@@ -124,19 +137,24 @@ def query_national_rail_availability(
                     )
                     SELECT
                         s.schedule_id, s.line, s.direction,
-                        s.origin_station_id, s.destination_station_id,
+                        so.station_id AS origin_station_id,
+                        sd.station_id AS destination_station_id,
+                        (sd.stop_order - so.stop_order) AS stops_travelled,
                         s.first_train_time, s.last_train_time, s.base_fare_usd,
                         dr.travel_date,
                         sl.total_seats,
                         COALESCE(bc.booked_seats, 0) AS booked_seats,
                         sl.total_seats - COALESCE(bc.booked_seats, 0) AS available_seats
                     FROM national_rail_schedules s
+                    JOIN national_rail_schedule_stops so
+                        ON so.schedule_id = s.schedule_id AND so.station_id = %s
+                    JOIN national_rail_schedule_stops sd
+                        ON sd.schedule_id = s.schedule_id AND sd.station_id = %s
                     CROSS JOIN date_range dr
                     LEFT JOIN national_rail_seat_layouts sl ON s.schedule_id = sl.schedule_id
                     LEFT JOIN bookings_count bc
                         ON s.schedule_id = bc.schedule_id AND bc.travel_date = dr.travel_date
-                    WHERE s.origin_station_id = %s
-                      AND s.destination_station_id = %s
+                    WHERE so.stop_order < sd.stop_order
                       AND sl.total_seats - COALESCE(bc.booked_seats, 0) > 0
                     ORDER BY dr.travel_date ASC, s.schedule_id ASC
                 """
@@ -214,15 +232,26 @@ def query_metro_schedules(origin_id: str, destination_id: str) -> list[dict]:
     if cached is not None:
         return cached
 
+    # Match services calling at BOTH stations in the correct direction via the
+    # metro_schedule_stops junction (so.stop_order < sd.stop_order), so journeys
+    # between intermediate stations are found — not only terminal O-D pairs. The
+    # returned origin/destination are the requested journey endpoints.
     sql = """
         SELECT
-            schedule_id, line, direction,
-            origin_station_id, destination_station_id,
-            TO_CHAR(first_train_time, 'HH24:MI') AS first_train_time,
-            TO_CHAR(last_train_time, 'HH24:MI') AS last_train_time,
-            base_fare_usd, operating_days
-        FROM metro_schedules
-        WHERE origin_station_id = %s AND destination_station_id = %s
+            s.schedule_id, s.line, s.direction,
+            so.station_id AS origin_station_id,
+            sd.station_id AS destination_station_id,
+            (sd.stop_order - so.stop_order) AS stops_travelled,
+            TO_CHAR(s.first_train_time, 'HH24:MI') AS first_train_time,
+            TO_CHAR(s.last_train_time, 'HH24:MI') AS last_train_time,
+            s.base_fare_usd, s.operating_days
+        FROM metro_schedules s
+        JOIN metro_schedule_stops so
+            ON so.schedule_id = s.schedule_id AND so.station_id = %s
+        JOIN metro_schedule_stops sd
+            ON sd.schedule_id = s.schedule_id AND sd.station_id = %s
+        WHERE so.stop_order < sd.stop_order
+        ORDER BY s.schedule_id ASC
     """
     with _connect() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -568,20 +597,71 @@ def execute_booking(
             conn.close()
 
 
+# Cancellation refund tiers, sourced from train-mock-data/refund_policy.json
+# (RF001 — national rail, normal service). The refund shrinks the closer the
+# cancellation is to departure; an admin fee applies in the middle tiers. Each
+# tuple is (min_hours_before_departure, refund_percent, admin_fee_usd), checked
+# high→low. Express (RF002) shares the same window structure in the source data,
+# so the same tiers are applied uniformly here.
+_REFUND_WINDOWS = [
+    (48.0, 100, 0.00),   # >= 48h before departure → full refund
+    (24.0, 75,  0.50),   # 24–48h  → 75%
+    (2.0,  50,  0.50),   # 2–24h   → 50%
+    (0.0,  0,   0.00),   # < 2h or after departure → no refund (no-show)
+]
+
+
+def _compute_cancellation_refund(amount_usd, travel_date, departure_time):
+    """
+    Apply the cancellation refund policy to a booking amount.
+
+    Returns (refund_amount, refund_percent, admin_fee_usd, policy_window).
+    When the departure datetime is unknown (e.g. missing columns), we cannot
+    assess timing, so we fall back to a full refund and flag the window as
+    "unknown" rather than silently denying the refund.
+    """
+    hours_before = None
+    if travel_date is not None and departure_time is not None:
+        try:
+            departure_dt = datetime.combine(
+                travel_date if not isinstance(travel_date, str)
+                else datetime.fromisoformat(travel_date).date(),
+                departure_time if not isinstance(departure_time, str)
+                else time.fromisoformat(departure_time),
+                tzinfo=timezone.utc,
+            )
+            hours_before = (departure_dt - datetime.now(timezone.utc)).total_seconds() / 3600.0
+        except (ValueError, TypeError):
+            hours_before = None
+
+    if hours_before is None:
+        percent, admin_fee, window = 100, 0.00, "unknown"
+    else:
+        percent, admin_fee, window = 0, 0.00, "no_refund"
+        for min_hours, pct, fee in _REFUND_WINDOWS:
+            if hours_before >= min_hours:
+                percent, admin_fee, window = pct, fee, f">={min_hours}h"
+                break
+
+    refund_amount = round(max(0.0, float(amount_usd) * percent / 100.0 - admin_fee), 2)
+    return refund_amount, percent, admin_fee, window
+
+
 def execute_cancellation(
     booking_id: str,
     reason: str = "Customer requested",
 ) -> tuple[bool, dict | str]:
-    """Cancel a national rail booking."""
+    """Cancel a national rail booking and compute its refund per policy."""
     conn = None
     try:
         conn = psycopg2.connect(PG_DSN)
         conn.autocommit = False
 
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            # Step 1: look up the booking
+            # Step 1: look up the booking (incl. departure timing for the refund policy)
             cur.execute(
-                "SELECT booking_id, user_id, status, amount_usd, booked_at "
+                "SELECT booking_id, user_id, status, amount_usd, booked_at, "
+                "travel_date, departure_time "
                 "FROM national_rail_bookings WHERE booking_id = %s",
                 (booking_id,)
             )
@@ -600,6 +680,15 @@ def execute_cancellation(
                     f"Only 'pending' or 'confirmed' bookings can be cancelled."
                 )
 
+            # Step 2b: compute the refund per policy (closer to departure → less refund)
+            refund_amount, refund_percent, admin_fee_usd, refund_policy_window = (
+                _compute_cancellation_refund(
+                    booking["amount_usd"],
+                    booking.get("travel_date"),
+                    booking.get("departure_time"),
+                )
+            )
+
             # Step 3: update the booking status to cancelled
             cancelled_at_timestamp = datetime.now(timezone.utc)
             cur.execute(
@@ -616,21 +705,32 @@ def execute_cancellation(
                 conn.rollback()
                 return (False, f"Failed to update booking {booking_id}")
 
-            # Step 4: record the refund payment
-            payment_id = _gen_payment_id()
-            cur.execute(
-                """
-                INSERT INTO payments (payment_id, booking_id, amount_usd, method, status, paid_at)
-                VALUES (%s, %s, %s, %s, %s, NOW())
-                """,
-                (payment_id, booking_id, booking["amount_usd"], "cancellation", "refunded")
-            )
+            # Step 4: record the refund as an audit payment — only when money is
+            # actually returned. The schema enforces amount_usd > 0
+            # (chk_payment_amount_positive) and requires refunded_at to be set when
+            # status='refunded' (chk_payment_refund_consistency), so a 0-refund
+            # (no-show / late cancellation) records no payment row.
+            payment_id = None
+            if refund_amount > 0:
+                payment_id = _gen_payment_id()
+                cur.execute(
+                    """
+                    INSERT INTO payments (payment_id, booking_id, amount_usd, method, status, paid_at, refunded_at)
+                    VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
+                    """,
+                    (payment_id, booking_id, refund_amount, "cancellation", "refunded")
+                )
 
             conn.commit()
 
         return (True, {
             "booking_id": booking_id,
             "original_amount_usd": float(booking["amount_usd"]),
+            "refund_amount": refund_amount,
+            "refund_percent": refund_percent,
+            "admin_fee_usd": admin_fee_usd,
+            "refund_policy_window": refund_policy_window,
+            "refund_payment_id": payment_id,
             "status": "cancelled",
             "cancelled_at": cancelled_at_timestamp.isoformat(),
             "cancellation_reason": reason,

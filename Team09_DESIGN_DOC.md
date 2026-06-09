@@ -6,7 +6,7 @@
 
 ## Section 1 — Entity-Relationship Diagram（實體關係圖）
 
-TransitFlow 的關聯式資料庫共 12 張表（含一張 RAG 用的向量表）。下圖為以
+TransitFlow 的關聯式資料庫共 14 張表（含一張 RAG 用的向量表）。下圖為以
 dbdiagram.io 生成的 ER 圖（基數標在連線上）；其後並附 Mermaid 版本與 DBML 原始碼。
 
 ![TransitFlow ER 圖](docs/erd.png)
@@ -21,8 +21,12 @@ erDiagram
     national_rail_schedules ||--o{ national_rail_bookings : "booked on (1:N)"
     national_rail_schedules ||--o{ national_rail_seat_layouts : "has (1:N)"
     national_rail_schedules ||--o{ national_rail_fare_classes : "priced by (1:N)"
+    national_rail_schedules ||--o{ national_rail_schedule_stops : "calls at (1:N)"
+    national_rail_stations ||--o{ national_rail_schedule_stops : "stop on (1:N)"
     national_rail_stations ||--o{ national_rail_bookings : "origin/dest (1:N)"
     metro_stations ||--o{ metro_schedules : "origin/dest (1:N)"
+    metro_schedules ||--o{ metro_schedule_stops : "calls at (1:N)"
+    metro_stations ||--o{ metro_schedule_stops : "stop on (1:N)"
     metro_stations ||--o{ metro_station_adjacencies : "adjacent (1:N)"
     metro_schedules ||--o{ metro_travel_history : "travelled on (1:N)"
     metro_stations |o--o| national_rail_stations : "interchange (0..1:0..1)"
@@ -57,6 +61,12 @@ erDiagram
         numeric per_stop_rate_usd
         jsonb operating_days
     }
+    metro_schedule_stops {
+        varchar schedule_id PK
+        varchar station_id PK
+        integer stop_order
+        integer travel_time_from_origin_min
+    }
     national_rail_schedules {
         varchar schedule_id PK
         numeric base_fare_usd
@@ -67,6 +77,12 @@ erDiagram
         varchar fare_class PK
         numeric base_fare_usd
         numeric per_stop_rate_usd
+    }
+    national_rail_schedule_stops {
+        varchar schedule_id PK
+        varchar station_id PK
+        integer stop_order
+        integer travel_time_from_origin_min
     }
     national_rail_seat_layouts {
         varchar layout_id PK
@@ -131,6 +147,19 @@ erDiagram
 `national_rail_schedules` 會造成同一班次多票種的重複與更新異常，故獨立成 junction 表
 （PK = schedule_id + fare_class），讓 `query_national_rail_fare` 依票種正確套用
 `total = base + per_stop × stops`。
+
+第三個 3NF 決策是 **`national_rail_schedule_stops`（停靠序列）**：來源資料每個班次帶一個
+**有序的 `stops_in_order` 陣列**，而且**同起訖、不同停站樣式**的服務確實存在——例如普通車
+`NR_SCH01`（NR01→NR05）停靠 NR01,NR02,NR03,NR04,NR05，但直達車 `NR_SCH05`（同樣
+NR01→NR05）只停 NR01,NR03,NR05、**跳過 NR02/NR04**。停靠序列是一個**多值且有序**的屬性，
+若以陣列欄位塞在 `national_rail_schedules` 上會違反 1NF/3NF、且無法用 SQL 直接查「某兩站
+是否都停、順序為何」。因此獨立成 junction 表（PK = schedule_id + station_id，並帶
+`stop_order`、`travel_time_from_origin_min`）。這讓 `query_national_rail_availability` 能以
+`origin.stop_order < destination.stop_order` 查出**任兩個停靠站之間、且方向正確**的班次
+（中途站對如 NR02→NR04 會命中 `NR_SCH01`，而跳過該段的直達車 `NR_SCH05` 被正確排除），
+不再只能查「整段起訖站」。捷運採對稱設計：`metro_schedule_stops` 同樣以
+(schedule_id, station_id) 為 PK、帶 `stop_order`，`query_metro_schedules` 也用
+`so.stop_order < sd.stop_order` 查任兩停靠站之間、方向正確的班次。
 
 ### 2.2 刻意的反正規化（效能/簡潔權衡）
 - **座位圖 `national_rail_seat_layouts.coaches` 用 JSONB**：來源資料是

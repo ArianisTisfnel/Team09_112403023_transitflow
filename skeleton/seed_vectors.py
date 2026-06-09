@@ -19,6 +19,14 @@ import os
 import sys
 import time
 
+# This seeder prints progress with emoji/✓ glyphs. On consoles whose default
+# encoding is not UTF-8 (e.g. Windows cp950) those raise UnicodeEncodeError and
+# abort a REQUIRED setup step, leaving pgvector empty. Force UTF-8 stdout.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except (AttributeError, ValueError):
+    pass
+
 sys.path.insert(0, ".")
 
 from skeleton.llm_provider import llm

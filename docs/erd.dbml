@@ -1,6 +1,12 @@
 // TransitFlow ER diagram — paste into https://dbdiagram.io to render & export a PNG.
 // Mirrors databases/relational/schema.sql. Cardinality shows on the relationship lines.
+//
+// Tip for a clean export: after pasting, drag the tables apart so the TableGroups
+// don't overlap, then Save (top-right) so dbdiagram remembers the layout, and
+// Export → PNG. The auto-layout on first paste is always messy — the saved layout
+// is what you export.
 
+// ── Identity & transactions ───────────────────────────────────────────────────
 Table users {
   user_id         varchar(20)  [pk]
   full_name       varchar(100) [not null]
@@ -12,67 +18,6 @@ Table users {
   password        varchar(255) [note: 'argon2id hash — never plain text']
   secret_question varchar(500)
   secret_answer   varchar(255)
-}
-
-Table national_rail_stations {
-  national_rail_station_id     varchar(20)  [pk]
-  name                         varchar(100) [not null]
-  lines                        jsonb        [note: 'array of line codes']
-  is_interchange_national_rail boolean
-  is_interchange_metro         boolean
-  interchange_metro_station_id varchar(20)  [note: 'circular FK -> metro_stations (DEFERRABLE)']
-}
-
-Table metro_stations {
-  metro_station_id                     varchar(20)  [pk]
-  name                                 varchar(100) [not null]
-  lines                                jsonb        [note: 'array of line codes']
-  is_interchange_metro                 boolean
-  is_interchange_national_rail         boolean
-  interchange_national_rail_station_id varchar(20)  [note: 'circular FK -> national_rail_stations (DEFERRABLE)']
-}
-
-Table metro_station_adjacencies {
-  adjacency_id           serial      [pk]
-  origin_station_id      varchar(20) [not null]
-  destination_station_id varchar(20) [not null]
-  line                   varchar(20) [not null]
-  travel_time_min        integer     [not null]
-  created_at             timestamptz
-}
-
-Table metro_schedules {
-  schedule_id            varchar(30)  [pk]
-  line                   varchar(20)  [not null]
-  direction              varchar(20)  [not null]
-  origin_station_id      varchar(20)  [not null]
-  destination_station_id varchar(20)  [not null]
-  first_train_time       time         [not null]
-  last_train_time        time         [not null]
-  base_fare_usd          numeric      [not null]
-  operating_days         jsonb        [note: 'array of weekdays']
-  created_at             timestamptz
-}
-
-Table national_rail_schedules {
-  schedule_id            varchar(30) [pk]
-  line                   varchar(20) [not null]
-  service_type           varchar(20) [not null]
-  direction              varchar(20) [not null]
-  origin_station_id      varchar(20) [not null]
-  destination_station_id varchar(20) [not null]
-  first_train_time       time        [not null]
-  last_train_time        time        [not null]
-  base_fare_usd          numeric     [not null]
-  created_at             timestamptz
-}
-
-Table national_rail_seat_layouts {
-  layout_id   varchar(30) [pk]
-  schedule_id varchar(30) [not null]
-  coaches     jsonb       [note: 'denormalised coach/seat tree']
-  total_seats integer     [not null]
-  created_at  timestamptz
 }
 
 Table national_rail_bookings {
@@ -119,6 +64,95 @@ Table payments {
   refunded_at timestamptz
 }
 
+// ── Stations (network topology) ───────────────────────────────────────────────
+Table national_rail_stations {
+  national_rail_station_id     varchar(20)  [pk]
+  name                         varchar(100) [not null]
+  lines                        jsonb        [note: 'array of line codes']
+  is_interchange_national_rail boolean
+  is_interchange_metro         boolean
+  interchange_metro_station_id varchar(20)  [note: 'circular FK -> metro_stations (DEFERRABLE)']
+}
+
+Table metro_stations {
+  metro_station_id                     varchar(20)  [pk]
+  name                                 varchar(100) [not null]
+  lines                                jsonb        [note: 'array of line codes']
+  is_interchange_metro                 boolean
+  is_interchange_national_rail         boolean
+  interchange_national_rail_station_id varchar(20)  [note: 'circular FK -> national_rail_stations (DEFERRABLE)']
+}
+
+Table metro_station_adjacencies {
+  adjacency_id           serial      [pk]
+  origin_station_id      varchar(20) [not null]
+  destination_station_id varchar(20) [not null]
+  line                   varchar(20) [not null]
+  travel_time_min        integer     [not null]
+  created_at             timestamptz
+}
+
+// ── Schedules, stops & fares ──────────────────────────────────────────────────
+Table metro_schedules {
+  schedule_id            varchar(30)  [pk]
+  line                   varchar(20)  [not null]
+  direction              varchar(20)  [not null]
+  origin_station_id      varchar(20)  [not null]
+  destination_station_id varchar(20)  [not null]
+  first_train_time       time         [not null]
+  last_train_time        time         [not null]
+  base_fare_usd          numeric      [not null]
+  per_stop_rate_usd      numeric      [not null]
+  operating_days         jsonb        [note: 'array of weekdays']
+  created_at             timestamptz
+}
+
+Table metro_schedule_stops {
+  schedule_id                 varchar(30) [pk, note: 'ordered stop sequence — 3NF junction, not an array column']
+  station_id                  varchar(20) [pk]
+  stop_order                  integer     [not null]
+  travel_time_from_origin_min integer     [not null]
+  created_at                  timestamptz
+}
+
+Table national_rail_schedules {
+  schedule_id            varchar(30) [pk]
+  line                   varchar(20) [not null]
+  service_type           varchar(20) [not null, note: 'normal | express']
+  direction              varchar(20) [not null]
+  origin_station_id      varchar(20) [not null]
+  destination_station_id varchar(20) [not null]
+  first_train_time       time        [not null]
+  last_train_time        time        [not null]
+  base_fare_usd          numeric     [not null]
+  created_at             timestamptz
+}
+
+Table national_rail_schedule_stops {
+  schedule_id                 varchar(30) [pk, note: 'ordered stop sequence — 3NF junction, not an array column']
+  station_id                  varchar(20) [pk]
+  stop_order                  integer     [not null]
+  travel_time_from_origin_min integer     [not null]
+  created_at                  timestamptz
+}
+
+Table national_rail_fare_classes {
+  schedule_id       varchar(30) [pk, note: '3NF junction: per-(schedule, class) fare']
+  fare_class        varchar(20) [pk]
+  base_fare_usd     numeric     [not null]
+  per_stop_rate_usd numeric     [not null]
+  created_at        timestamptz
+}
+
+Table national_rail_seat_layouts {
+  layout_id   varchar(30) [pk]
+  schedule_id varchar(30) [not null]
+  coaches     jsonb       [note: 'denormalised coach/seat tree']
+  total_seats integer     [not null]
+  created_at  timestamptz
+}
+
+// ── Vector / RAG ──────────────────────────────────────────────────────────────
 Table policy_documents {
   id          serial       [pk]
   title       varchar(200) [not null]
@@ -127,6 +161,33 @@ Table policy_documents {
   embedding   varchar      [note: 'pgvector vector(768) — Ollama nomic-embed-text']
   source_file varchar(200)
   created_at  timestamptz
+}
+
+// ── Visual grouping (boxes related tables together for a cleaner layout) ───────
+TableGroup "Identity & Transactions" {
+  users
+  national_rail_bookings
+  metro_travel_history
+  payments
+}
+
+TableGroup "Stations (network)" {
+  national_rail_stations
+  metro_stations
+  metro_station_adjacencies
+}
+
+TableGroup "Schedules, Stops & Fares" {
+  metro_schedules
+  metro_schedule_stops
+  national_rail_schedules
+  national_rail_schedule_stops
+  national_rail_fare_classes
+  national_rail_seat_layouts
+}
+
+TableGroup "Vector / RAG" {
+  policy_documents
 }
 
 // ── Relationships (cardinality shown on the lines) ────────────────────────────
@@ -138,10 +199,19 @@ Ref: metro_station_adjacencies.destination_station_id > metro_stations.metro_sta
 
 Ref: metro_schedules.origin_station_id > metro_stations.metro_station_id
 Ref: metro_schedules.destination_station_id > metro_stations.metro_station_id
+
+Ref: metro_schedule_stops.schedule_id > metro_schedules.schedule_id
+Ref: metro_schedule_stops.station_id > metro_stations.metro_station_id
+
 Ref: national_rail_schedules.origin_station_id > national_rail_stations.national_rail_station_id
 Ref: national_rail_schedules.destination_station_id > national_rail_stations.national_rail_station_id
 
 Ref: national_rail_seat_layouts.schedule_id > national_rail_schedules.schedule_id
+
+Ref: national_rail_schedule_stops.schedule_id > national_rail_schedules.schedule_id
+Ref: national_rail_schedule_stops.station_id > national_rail_stations.national_rail_station_id
+
+Ref: national_rail_fare_classes.schedule_id > national_rail_schedules.schedule_id
 
 Ref: national_rail_bookings.user_id > users.user_id
 Ref: national_rail_bookings.schedule_id > national_rail_schedules.schedule_id

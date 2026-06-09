@@ -26,7 +26,9 @@ DROP TABLE IF EXISTS metro_travel_history CASCADE;
 DROP TABLE IF EXISTS national_rail_bookings CASCADE;
 DROP TABLE IF EXISTS national_rail_seat_layouts CASCADE;
 DROP TABLE IF EXISTS national_rail_fare_classes CASCADE;
+DROP TABLE IF EXISTS national_rail_schedule_stops CASCADE;
 DROP TABLE IF EXISTS national_rail_schedules CASCADE;
+DROP TABLE IF EXISTS metro_schedule_stops CASCADE;
 DROP TABLE IF EXISTS metro_schedules CASCADE;
 DROP TABLE IF EXISTS metro_station_adjacencies CASCADE;
 DROP TABLE IF EXISTS metro_stations CASCADE;
@@ -156,6 +158,37 @@ CREATE TABLE IF NOT EXISTS metro_schedules (
 );
 
 -- ------------------------------------------------------------
+--  Table 5b: metro_schedule_stops
+--  The ordered stop sequence for each metro service (mirrors
+--  national_rail_schedule_stops). metro_schedules.json gives each service a
+--  stops_in_order array; modelling it as a junction (PK = schedule_id +
+--  station_id, with stop_order) keeps the schedule row free of a multi-valued
+--  array column and lets query_metro_schedules return services that call at any
+--  two stations in the correct direction, not just terminal O-D pairs.
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS metro_schedule_stops (
+    schedule_id                 VARCHAR(30) NOT NULL,
+    station_id                  VARCHAR(20) NOT NULL,
+    stop_order                  INTEGER     NOT NULL,
+    travel_time_from_origin_min INTEGER     NOT NULL DEFAULT 0,
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (schedule_id, station_id),
+    CONSTRAINT uq_metro_schedule_stop_order UNIQUE (schedule_id, stop_order),
+    CONSTRAINT chk_metro_stop_order_nonneg  CHECK (stop_order >= 0),
+    CONSTRAINT fk_metro_schedule_stops_schedule
+        FOREIGN KEY (schedule_id)
+        REFERENCES metro_schedules(schedule_id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_metro_schedule_stops_station
+        FOREIGN KEY (station_id)
+        REFERENCES metro_stations(metro_station_id)
+        ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_metro_schedule_stops_station
+    ON metro_schedule_stops(station_id);
+
+-- ------------------------------------------------------------
 --  Table 6: national_rail_schedules
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS national_rail_schedules (
@@ -205,6 +238,41 @@ CREATE TABLE IF NOT EXISTS national_rail_fare_classes (
         REFERENCES national_rail_schedules(schedule_id)
         ON DELETE CASCADE
 );
+
+-- ------------------------------------------------------------
+--  Table 6c: national_rail_schedule_stops
+--  The ordered stop sequence for each national rail service. The source data
+--  (national_rail_schedules.json) gives each schedule a `stops_in_order` array,
+--  and normal vs express services with the SAME terminal origin/destination stop
+--  at different intermediate stations (e.g. NR_SCH01 stops at NR02/NR04 while the
+--  express NR_SCH05 skips them). Modelling the sequence as a junction table
+--  (PK = schedule_id + station_id, with stop_order) keeps the schedule table in
+--  3NF (a multi-valued, ordered attribute does not belong as an array column on
+--  the schedule row) and lets query_national_rail_availability answer journeys
+--  between ANY two stations a service calls at, in the correct direction
+--  (origin.stop_order < destination.stop_order).
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS national_rail_schedule_stops (
+    schedule_id                 VARCHAR(30) NOT NULL,
+    station_id                  VARCHAR(20) NOT NULL,
+    stop_order                  INTEGER     NOT NULL,
+    travel_time_from_origin_min INTEGER     NOT NULL DEFAULT 0,
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (schedule_id, station_id),
+    CONSTRAINT uq_schedule_stop_order UNIQUE (schedule_id, stop_order),
+    CONSTRAINT chk_stop_order_nonneg  CHECK (stop_order >= 0),
+    CONSTRAINT fk_schedule_stops_schedule
+        FOREIGN KEY (schedule_id)
+        REFERENCES national_rail_schedules(schedule_id)
+        ON DELETE CASCADE,
+    CONSTRAINT fk_schedule_stops_station
+        FOREIGN KEY (station_id)
+        REFERENCES national_rail_stations(national_rail_station_id)
+        ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_nr_schedule_stops_station
+    ON national_rail_schedule_stops(station_id);
 
 -- ------------------------------------------------------------
 --  Table 7: national_rail_seat_layouts

@@ -242,6 +242,32 @@ def seed_metro_schedules(cur):
     print(f"  [metro_schedules] Inserted {count} rows")
 
 
+def seed_metro_schedule_stops(cur):
+    """
+    Seed metro_schedule_stops from each metro schedule's stops_in_order array
+    (mirrors seed_national_rail_schedule_stops). One row per (schedule_id,
+    station_id) with its 1-based stop_order and cumulative travel time, so
+    query_metro_schedules can match a journey between any two stations a service
+    calls at, in the correct direction.
+    """
+    data = load("metro_schedules.json")
+    if not data:
+        print("  [metro_schedule_stops] No data to load.")
+        return
+
+    columns = ["schedule_id", "station_id", "stop_order", "travel_time_from_origin_min"]
+    rows = []
+    for item in data:
+        schedule_id = item.get("schedule_id")
+        stops = item.get("stops_in_order") or []
+        times = item.get("travel_time_from_origin_min") or {}
+        for order, station_id in enumerate(stops, start=1):
+            rows.append((schedule_id, station_id, order, int(times.get(station_id, 0))))
+
+    count = insert_many(cur, "metro_schedule_stops", columns, rows)
+    print(f"  [metro_schedule_stops] Inserted {count} rows")
+
+
 def seed_national_rail_schedules(cur):
     """
     Seed national_rail_schedules from national_rail_schedules.json.
@@ -310,6 +336,32 @@ def seed_national_rail_fare_classes(cur):
 
     count = insert_many(cur, "national_rail_fare_classes", columns, rows)
     print(f"  [national_rail_fare_classes] Inserted {count} rows")
+
+
+def seed_national_rail_schedule_stops(cur):
+    """
+    Seed national_rail_schedule_stops from each schedule's stops_in_order array.
+    One row per (schedule_id, station_id) carrying its 1-based stop_order and the
+    cumulative travel_time_from_origin_min, so query_national_rail_availability can
+    match a journey between any two stations a service calls at (and only in the
+    correct direction, origin.stop_order < destination.stop_order).
+    """
+    data = load("national_rail_schedules.json")
+    if not data:
+        print("  [national_rail_schedule_stops] No data to load.")
+        return
+
+    columns = ["schedule_id", "station_id", "stop_order", "travel_time_from_origin_min"]
+    rows = []
+    for item in data:
+        schedule_id = item.get("schedule_id")
+        stops = item.get("stops_in_order") or []
+        times = item.get("travel_time_from_origin_min") or {}
+        for order, station_id in enumerate(stops, start=1):
+            rows.append((schedule_id, station_id, order, int(times.get(station_id, 0))))
+
+    count = insert_many(cur, "national_rail_schedule_stops", columns, rows)
+    print(f"  [national_rail_schedule_stops] Inserted {count} rows")
 
 
 def seed_national_rail_seat_layouts(cur):
@@ -596,8 +648,10 @@ def main():
 
         # Phase 2: schedules and layouts
         seed_metro_schedules(cur)
+        seed_metro_schedule_stops(cur)
         seed_national_rail_schedules(cur)
         seed_national_rail_fare_classes(cur)
+        seed_national_rail_schedule_stops(cur)
         seed_national_rail_seat_layouts(cur)
 
         # Phase 3: bookings and trips

@@ -20,6 +20,13 @@ import json
 import os
 import sys
 
+# Print check/cross marks safely on consoles whose default encoding is not UTF-8
+# (e.g. Windows cp950); without this the ✓/✗ glyphs raise UnicodeEncodeError.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except (AttributeError, ValueError):
+    pass
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(SCRIPT_DIR)
 sys.path.insert(0, PROJECT_DIR)
