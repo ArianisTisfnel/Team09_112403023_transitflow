@@ -95,6 +95,24 @@ def test_query_delay_ripple_single_hop():
     print("\n✓ All assertions passed!")
 
 
+def test_query_delay_ripple_zero_hops_only_self():
+    """hops=0 must return only the delayed station itself — no neighbours."""
+    print("\n" + "="*70)
+    print("Test: query_delay_ripple (hops=0 — station itself only)")
+    print("="*70)
+
+    result = query_delay_ripple("NR03", hops=0)
+
+    assert result["affected_station"] is not None, "✗ Center station should be found"
+    assert result["affected_station"]["station_id"] == "NR03"
+    assert result["primary_impact_zone"] == [], "✗ hops=0 must expose no neighbours"
+    assert result["secondary_impact_zone"] == [], "✗ hops=0 must expose no neighbours"
+    assert result["total_affected_stations"] == 0
+    assert result["total_hops_searched"] == 0
+
+    print("\n✓ hops=0 returns only the delayed station itself!")
+
+
 def test_query_delay_ripple_return_type():
     """Verify return type is dict with correct keys."""
     print("\n" + "="*70)
