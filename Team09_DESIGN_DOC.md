@@ -295,7 +295,7 @@ pgvector 以 `<=>`（餘弦距離）運算，查詢轉回相似度 `1 - (embeddi
 - **Outcome**：AI 將節點收斂為 `:MetroStation` / `:NationalRailStation`（另共掛 `:Station`
   以利跨網單標籤走訪）、關係收斂為 `METRO_LINK` / `RAIL_LINK` / `INTERCHANGE_TO`，並一次
   同步 `seed_neo4j.py`、`graph/queries.py` 的 5 段 Cypher 與相關單元／整合測試；全套
-  414 個測試維持綠燈。**心得**：命名是跨檔契約，AI 適合做這種「一處改、多處同步」的機械式收斂。
+  測試維持綠燈。**心得**：命名是跨檔契約，AI 適合做這種「一處改、多處同步」的機械式收斂。
 
 ---
 
