@@ -65,8 +65,8 @@ pytest tests/integration/   # 需 Docker 已啟動 + 三個 DB 已 seed
 pytest                      # 全部
 ```
 
-`pytest.ini` 設定 `--import-mode=importlib`。目前套件共 **415 個測試通過**
-（單元 347 + 整合 68）。少數測試刻意保留但在收集階段跳過（見 `tests/conftest.py`），
+`pytest.ini` 設定 `--import-mode=importlib`。目前套件共 **424 個測試通過**
+（單元 356 + 整合 68）。少數測試刻意保留但在收集階段跳過（見 `tests/conftest.py`），
 因為它們依賴非本次繳交範圍的選做模組。
 
 ---
@@ -77,7 +77,7 @@ pytest                      # 全部
 
 | 組件（／100） | 在本 repo 的佐證位置 |
 |---|---|
-| **靜態程式碼** | `databases/relational/schema.sql`（schema）、`databases/relational/queries.py`（PostgreSQL 查詢）、`skeleton/seed_postgres.py`（種子）、`databases/graph/seed.cypher` + `skeleton/seed_neo4j.py`（圖形設計 + 種子）、`databases/graph/queries.py`（Cypher 查詢） |
+| **靜態程式碼** | `databases/relational/schema.sql`（schema）、`databases/relational/queries.py`（PostgreSQL 查詢）、`skeleton/seed_postgres.py`（種子）、`skeleton/seed_neo4j.py`（圖形設計 + 種子：節點/關係於此以 MERGE 建立）、`databases/graph/queries.py`（Cypher 查詢） |
 | **設計文件** | `Team09_DESIGN_DOC.md`（ER、正規化、圖形理由、RAG、AI 使用、反思）。背景素材：`docs/` 下的兩份 tutorial |
 | **現場測試** | 依上方「快速開始」執行 —— 助教會 seed 資料庫並操作 Gradio UI |
 
